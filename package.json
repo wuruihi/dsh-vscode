@@ -1,0 +1,128 @@
+{
+  "name": "dsh-vscode",
+  "displayName": "DeepSeek Harness (DSH)",
+  "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
+  "version": "0.3.4",
+  "publisher": "wurui",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wuruihi/dsh-vscode"
+  },
+  "type": "module",
+  "engines": {
+    "vscode": "^1.87.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "dsh-vscode",
+          "title": "DSH",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh-vscode": [
+        {
+          "type": "webview",
+          "id": "dsh-vscode.chat",
+          "name": "DeepSeek Harness"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dsh-vscode.focus",
+        "title": "DSH: Open Chat"
+      },
+      {
+        "command": "dsh-vscode.openInEditor",
+        "title": "DSH: Open Chat in Editor Tab"
+      },
+      {
+        "command": "dsh-vscode.newSession",
+        "title": "DSH: New Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dsh-vscode.showTurnChanges",
+        "title": "DSH: Show This Turn's Changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "dsh-vscode.showLogs",
+        "title": "DSH: Show Logs"
+      }
+    ],
+    "menus": {
+      "editor/context": []
+    },
+    "keybindings": [
+      {
+        "command": "dsh-vscode.focus",
+        "key": "ctrl+alt+d",
+        "when": "!terminalFocus"
+      }
+    ],
+    "configuration": {
+      "title": "DSH",
+      "properties": {
+        "dsh-vscode.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3080",
+          "description": "Base URL of the running dsh web instance."
+        },
+        "dsh-vscode.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer to start dsh web when it is not reachable."
+        },
+        "dsh-vscode.nodePath": {
+          "type": "string",
+          "default": "C:\\Program Files\\nodejs\\node.exe",
+          "description": "Node executable used to start dsh web (Windows)."
+        },
+        "dsh-vscode.dshBinPath": {
+          "type": "string",
+          "default": "C:\\Users\\wurui\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
+          "description": "Path to the installed dsh CLI bin.js used when starting dsh web."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.src.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "smoke": "node scripts/smoke.mjs",
+    "package": "pnpm build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/vscode": "^1.87.0",
+    "@types/ws": "^8.5.13",
+    "@vscode/vsce": "^3.9.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.0",
+    "ws": "^8.18.0"
+  }
+}

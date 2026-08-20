@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+webview/src/**
+scripts/**
+docs/**
+node_modules/**
+esbuild.mjs
+tsconfig.*.json
+*.md
+!README.md
+dist/*.map
+dist/extension.js
