@@ -1,4 +1,6 @@
-# dsh-vscode
+# dsh-web-vscode
+
+> Marketplace 扩展名 `dsh-web-vscode`（`dsh-vscode` 在市场已被他人占用）；GitHub 仓库名保持 `dsh-vscode`。
 
 VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh web`，默认 127.0.0.1:3080）。与 DSH 浏览器 GUI 共享同一实例：会话、插件生态（genui / agent-teams / workflow）、持久化全部互通。
 

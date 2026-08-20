@@ -1,5 +1,5 @@
 {
-  "name": "dsh-vscode",
+  "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
   "version": "0.3.4",
