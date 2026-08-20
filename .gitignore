@@ -3,3 +3,5 @@ dist/
 *.vsix
 .DS_Store
 *.log
+
+test-sandbox/
