@@ -1,0 +1,50 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3E7BFA"/>
+      <stop offset="1" stop-color="#1E4FC2"/>
+    </linearGradient>
+    <linearGradient id="belly" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE8FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- full-bleed badge background (marketplace clips corners) -->
+  <rect x="0" y="0" width="256" height="256" fill="url(#bg)"/>
+
+  <!-- subtle wave at the bottom -->
+  <path d="M0 214 Q 42 198 84 214 T 168 214 T 256 214 L 256 256 L 0 256 Z"
+        fill="#FFFFFF" fill-opacity="0.14"/>
+
+  <!-- whale: head left, tail right -->
+  <g>
+    <!-- tail flukes -->
+    <path d="M168 138 L212 104 C 218 100 224 104 222 112 L 208 146 L 222 180 C 224 188 218 192 212 188 L 168 154 Z"
+          fill="url(#belly)"/>
+    <!-- body: rounded capsule with lifted head -->
+    <path d="M56 150
+             C 56 112 88 96 122 96
+             C 158 96 182 116 182 142
+             C 182 168 158 182 124 182
+             L 96 182
+             C 72 182 56 170 56 150 Z"
+          fill="url(#belly)"/>
+    <!-- mouth line -->
+    <path d="M60 152 Q 76 160 96 156" stroke="#1E4FC2" stroke-width="5"
+          stroke-linecap="round" fill="none"/>
+    <!-- eye -->
+    <circle cx="88" cy="128" r="7" fill="#16357A"/>
+    <!-- flipper -->
+    <path d="M118 176 C 126 190 146 194 160 188 C 152 178 136 172 118 176 Z"
+          fill="#BFD3F5"/>
+    <!-- chat dots on body (chat-client identity) -->
+    <circle cx="128" cy="140" r="6.5" fill="#3E7BFA"/>
+    <circle cx="150" cy="140" r="6.5" fill="#3E7BFA" fill-opacity="0.75"/>
+    <circle cx="172" cy="140" r="6.5" fill="#3E7BFA" fill-opacity="0.5"/>
+    <!-- spout -->
+    <circle cx="70" cy="74" r="6" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="84" cy="60" r="5" fill="#FFFFFF" fill-opacity="0.7"/>
+    <circle cx="100" cy="50" r="4" fill="#FFFFFF" fill-opacity="0.5"/>
+  </g>
+</svg>

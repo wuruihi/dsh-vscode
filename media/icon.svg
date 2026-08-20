@@ -1,5 +1,8 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" fill="#4A6CF7" fill-opacity="0.9"/>
-  <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" stroke="#4A6CF7" stroke-width="1.5"/>
-  <circle cx="12" cy="12" r="3.2" fill="#fff"/>
+  <!-- DSH whale silhouette (sidebar, theme-safe light blue) -->
+  <path d="M4 13.2 C4 9.4 7 7.6 10.2 7.6 C13.4 7.6 15.6 9.4 15.6 11.8 C15.6 14.2 13.4 15.6 10.4 15.6 L8.2 15.6 C5.8 15.6 4 14.8 4 13.2 Z" fill="#7FA8F0"/>
+  <path d="M15 11.6 L19.6 8.4 C20.1 8.1 20.6 8.4 20.5 9 L19.4 11.8 L20.5 14.6 C20.6 15.2 20.1 15.5 19.6 15.2 L15 12 Z" fill="#7FA8F0"/>
+  <circle cx="7" cy="11.4" r="1" fill="#1E4FC2"/>
+  <circle cx="6.2" cy="5.8" r="0.9" fill="#7FA8F0" fill-opacity="0.8"/>
+  <circle cx="8.2" cy="4.4" r="0.7" fill="#7FA8F0" fill-opacity="0.6"/>
 </svg>
