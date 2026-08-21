@@ -64,12 +64,13 @@ body {
 .session-row.is-current { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* live bar */
+/* live bar — sits directly above the composer */
 .live-bar {
   display: flex; align-items: center; gap: 6px;
-  padding: 3px 10px; font-size: 11px;
-  background: var(--vscode-statusBarItem-remoteBackground, rgba(128,128,128,.15));
-  color: var(--vscode-statusBarItem-remoteForeground, var(--vscode-foreground));
+  padding: 4px 12px; font-size: 11.5px;
+  background: var(--vscode-inputValidation-infoBackground, rgba(70,130,220,.14));
+  border-top: 1px solid var(--vscode-inputValidation-infoBorder, rgba(70,130,220,.35));
+  color: var(--vscode-foreground);
 }
 .spinner {
   width: 10px; height: 10px; border-radius: 50%;

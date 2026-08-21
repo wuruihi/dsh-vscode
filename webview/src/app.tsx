@@ -329,15 +329,6 @@ export function App() {
         </div>
       )}
 
-      {/* live tool indicator */}
-      {(busy || liveTool) && (
-        <div className="live-bar">
-          <span className="spinner" /> {liveTool ? `正在执行：${liveTool}` : "思考中…"}
-          <span className="spacer" />
-          <button className="link-btn" onClick={() => current && post({ t: "cancel", sessionId: current })}>停止</button>
-        </div>
-      )}
-
       {/* messages */}
       <div className="messages" ref={listRef} onScroll={onScroll}>
         {loadingOlder && <div className="muted pad">⏳ 正在加载更早消息…</div>}
@@ -387,6 +378,16 @@ export function App() {
 
       {/* notify */}
       {notify && <div className={`notify notify-${notify.kind}`}>{notify.message}</div>}
+
+      {/* live tool indicator — directly above the composer (reading order:
+          messages flow down into "what's running now", then the input) */}
+      {(busy || liveTool) && (
+        <div className="live-bar">
+          <span className="spinner" /> {liveTool ? `正在执行：${liveTool}` : "思考中…"}
+          <span className="spacer" />
+          <button className="link-btn" onClick={() => current && post({ t: "cancel", sessionId: current })}>停止</button>
+        </div>
+      )}
 
       {/* composer */}
       <div className="composer">
