@@ -123,12 +123,27 @@ function scanValue(text: string, pos: number): [number, unknown] | null {
 
 function repairSpec(raw: string): Node | null {
   const text = raw.trim();
-  if (!text.startsWith("{")) return null;
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
   const first = scanValue(text, 0);
   if (!first) return null;
   const [end1, v1] = first;
-  const root = v1 as Node;
-  if (!root || typeof root !== "object" || !Array.isArray(root.items)) return null;
+  // Root shapes: {items:[…]} envelope, a bare [components] array, or a bare
+  // component sequence (models sometimes emit buttons/objects with no shell
+  // and no separators) — the latter two wrap into an envelope.
+  let root: Node;
+  let componentMode: boolean;
+  if (Array.isArray(v1)) {
+    root = { items: v1 };
+    componentMode = true;
+  } else if (v1 && typeof v1 === "object" && Array.isArray((v1 as Node).items)) {
+    root = v1 as Node;
+    componentMode = false;
+  } else if (v1 && typeof v1 === "object" && typeof (v1 as Node).type === "string") {
+    root = { items: [v1] };
+    componentMode = true;
+  } else {
+    return null;
+  }
   let pos = end1;
   const orphans: unknown[] = [];
   let guard = 0;
@@ -146,7 +161,17 @@ function repairSpec(raw: string): Node | null {
     if (text[pos] !== "{" && text[pos] !== "[") break;
     const nxt = scanValue(text, pos);
     if (!nxt) break; // unparseable orphan: keep what we have, drop the tail
-    orphans.push(nxt[1]);
+    const v = nxt[1];
+    if (componentMode && Array.isArray(v)) {
+      orphans.push(...v);
+    } else if (componentMode && v && typeof v === "object" && Array.isArray((v as Node).items)) {
+      // a stray envelope among bare components: splice its items in
+      orphans.push(...(v as Node).items);
+    } else if (v && typeof v === "object") {
+      orphans.push(v);
+    } else {
+      break;
+    }
     pos = nxt[0];
   }
   if (orphans.length > 0) root.items = [...root.items, ...orphans];
