@@ -481,6 +481,9 @@ body {
 }
 .file-item.is-sel { background: var(--vscode-list-activeSelectionBackground, #04395e); color: var(--vscode-list-activeSelectionForeground, #fff); }
 .file-item .file-rel { font-family: var(--vscode-uiFontFamilyMonospace, monospace); }
+.file-item .slash-kind { flex: none; width: 18px; }
+.file-item .slash-name { font-family: var(--vscode-uiFontFamilyMonospace, monospace); font-weight: 600; flex: none; }
+.file-item .slash-desc { color: var(--vscode-descriptionForeground); margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* attachment chips */
 .attach-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }

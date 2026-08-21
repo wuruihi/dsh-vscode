@@ -94,6 +94,7 @@ export type ExtToView =
   | { t: "presets"; data: PresetData }
   | { t: "inject-attachment"; label: string; text: string }
   | { t: "files"; reqId: number; items: { path: string; rel: string }[] }
+  | { t: "slash"; reqId: number; items: { kind: "skill" | "command"; name: string; description: string }[] }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string };
 
 /** webview -> extension host */
@@ -115,5 +116,7 @@ export type ViewToExt =
   | { t: "queue-remove"; sessionId: string; itemId: string }
   | { t: "load-older"; sessionId: string; beforeSeq: number }
   | { t: "list-files"; reqId: number; query: string }
+  | { t: "list-slash"; reqId: number; sessionId: string }
+  | { t: "run-command"; sessionId: string; line: string }
   | { t: "open-diff"; callId: string }
   | { t: "log"; message: string };

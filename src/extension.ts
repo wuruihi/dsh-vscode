@@ -111,6 +111,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           panel.post({ t: "files", reqId: m.reqId, items }),
         );
         break;
+      case "list-slash":
+        manager.listSlash(m.sessionId).then((items) =>
+          panel.post({ t: "slash", reqId: m.reqId, items }),
+        );
+        break;
+      case "run-command":
+        void manager.runCommand(m.sessionId, m.line);
+        break;
       case "open-diff":
         void diff.openForCall(m.callId).then((opened) => {
           if (!opened) void diff.openTurnSummary();

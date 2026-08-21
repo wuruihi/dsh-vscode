@@ -45,11 +45,16 @@ export function App() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [renaming, setRenaming] = useState<{ sessionId: string; title: string } | undefined>();
   const [running, setRunning] = useState(false);
-  // @ file completion: attachments + popup state
+  // @ file completion + / skill-command completion: attachments + popup state
   const [fileAtt, setFileAtt] = useState<{ path: string; rel: string }[]>([]);
   const [filePopup, setFilePopup] = useState<{ items: { path: string; rel: string }[]; sel: number; tokenStart: number } | undefined>();
   const fileReqRef = useRef(0);
   const fileDebounceRef = useRef<number>(0);
+  // slash menu: skills (insert `/name `) + built-in commands (dispatch)
+  const [slashPopup, setSlashPopup] = useState<{ items: { kind: "skill" | "command"; name: string; description: string }[]; sel: number; tokenStart: number; query: string } | undefined>();
+  const slashReqRef = useRef(0);
+  const slashCacheRef = useRef<{ at: number; items: { kind: "skill" | "command"; name: string; description: string }[] } | undefined>();
+  const SLASH_TTL = 60_000;
 
   const foldRef = useRef(new ConversationFold());
   const listRef = useRef<HTMLDivElement>(null);
@@ -131,6 +136,12 @@ export function App() {
               : cur,
           );
           break;
+        case "slash": {
+          if (m.reqId !== slashReqRef.current) break; // stale response
+          slashCacheRef.current = { at: Date.now(), items: m.items };
+          setSlashPopup((cur) => (cur ? { ...cur, items: m.items, sel: Math.min(cur.sel, Math.max(0, m.items.length - 1)) } : cur));
+          break;
+        }
         case "queue":
           setQueue(m.items);
           break;
@@ -219,10 +230,28 @@ export function App() {
     pinnedRef.current = true;
   };
 
-  /** Draft change + @token detection (token = @word before the caret). */
+  /** Draft change + @token/@file & /slash detection (token = word before the caret). */
   const onDraftChange = (value: string, caret: number): void => {
     setDraft(value);
     const before = value.slice(0, caret);
+    // slash menu: `/word` at a line start (skill gesture grammar: [a-z0-9-]+)
+    const sl = /(?:^|\n)[ \t]*\/([a-z0-9-]*)$/.exec(before);
+    if (sl && current) {
+      const tokenStart = caret - sl[1].length - 1; // index of '/'
+      setFilePopup(undefined);
+      const cached = slashCacheRef.current;
+      if (cached && Date.now() - cached.at < SLASH_TTL) {
+        const q = sl[1];
+        const items = q ? cached.items.filter((it) => it.name.startsWith(q)) : cached.items;
+        setSlashPopup({ items, sel: 0, tokenStart, query: q });
+        return;
+      }
+      setSlashPopup({ items: [], sel: 0, tokenStart, query: sl[1] });
+      slashReqRef.current += 1;
+      post({ t: "list-slash", reqId: slashReqRef.current, sessionId: current });
+      return;
+    }
+    setSlashPopup(undefined);
     const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
     if (!m) {
       setFilePopup(undefined);
@@ -235,6 +264,25 @@ export function App() {
       fileReqRef.current += 1;
       post({ t: "list-files", reqId: fileReqRef.current, query: m[1] });
     }, 120);
+  };
+
+  /** Pick a slash entry: skill inserts `/name ` (host pre-step gesture injects
+   *  its content); built-in command dispatches via RPC and clears the token. */
+  const pickSlash = (it: { kind: "skill" | "command"; name: string }): void => {
+    const p = slashPopup;
+    setSlashPopup(undefined);
+    if (!p || !current) return;
+    const end = taRef.current?.selectionStart ?? draft.length;
+    if (it.kind === "skill") {
+      const next = `${draft.slice(0, p.tokenStart)}/${it.name} ${draft.slice(end)}`;
+      setDraft(next);
+      const caret = p.tokenStart + it.name.length + 2;
+      window.setTimeout(() => taRef.current?.setSelectionRange(caret, caret), 0);
+    } else {
+      const next = draft.slice(0, p.tokenStart) + draft.slice(end).replace(/^\s+/, "");
+      setDraft(next);
+      post({ t: "run-command", sessionId: current, line: `/${it.name}` });
+    }
   };
 
   /** Pick a file from the popup: strip the @token, add an attachment chip. */
@@ -442,6 +490,27 @@ export function App() {
 
       {/* composer */}
       <div className="composer">
+        {/* slash menu (skills + commands) */}
+        {slashPopup && (
+          <div className="file-popup">
+            {slashPopup.items.length === 0 && <div className="file-item muted">{slashPopup.query ? "无匹配" : "加载中…"}</div>}
+            {slashPopup.items.map((it, i) => (
+              <div
+                key={`${it.kind}:${it.name}`}
+                className={`file-item ${i === slashPopup.sel ? "is-sel" : ""}`}
+                onMouseEnter={() => setSlashPopup((p) => (p ? { ...p, sel: i } : p))}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep textarea focus
+                  pickSlash(it);
+                }}
+              >
+                <span className="slash-kind">{it.kind === "skill" ? "🔧" : "⌘"}</span>
+                <span className="slash-name">/{it.name}</span>
+                <span className="slash-desc">{it.description.slice(0, 60)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {/* @ file completion popup */}
         {filePopup && (
           <div className="file-popup">
@@ -482,9 +551,31 @@ export function App() {
           <textarea
             ref={taRef}
             value={draft}
-            placeholder={busy ? "运行中，Enter 排队追加…" : "输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件；可粘贴图片"}
+            placeholder={busy ? "运行中，Enter 排队追加…" : "输入消息，Enter 发送；@ 引用文件；/ 触发技能"}
             onChange={(e) => onDraftChange(e.target.value, e.target.selectionStart ?? 0)}
             onKeyDown={(e) => {
+              if (slashPopup && slashPopup.items.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashPopup((p) => (p ? { ...p, sel: (p.sel + 1) % p.items.length } : p));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashPopup((p) => (p ? { ...p, sel: (p.sel - 1 + p.items.length) % p.items.length } : p));
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  pickSlash(slashPopup.items[slashPopup.sel]);
+                  return;
+                }
+              }
+              if (e.key === "Escape" && (filePopup || slashPopup)) {
+                setFilePopup(undefined);
+                setSlashPopup(undefined);
+                return;
+              }
               if (filePopup && filePopup.items.length > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
@@ -502,10 +593,6 @@ export function App() {
                   return;
                 }
               }
-              if (e.key === "Escape" && filePopup) {
-                setFilePopup(undefined);
-                return;
-              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 onSendDraft();
@@ -513,7 +600,10 @@ export function App() {
             }}
             onBlur={() => {
               // delay so mousedown-pick still fires before the popup unmounts
-              window.setTimeout(() => setFilePopup(undefined), 150);
+              window.setTimeout(() => {
+                setFilePopup(undefined);
+                setSlashPopup(undefined);
+              }, 150);
             }}
             onPaste={(e) => void onPaste(e)}
             rows={3}

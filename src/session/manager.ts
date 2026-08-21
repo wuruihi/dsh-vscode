@@ -406,6 +406,44 @@ export class SessionManager {
     }
   }
 
+  /** Slash-menu entries: skills (insert `/name ` text — the host pre-step
+   *  gesture injects content) + built-in commands (dispatch via RPC). */
+  async listSlash(sessionId: string): Promise<{ kind: "skill" | "command"; name: string; description: string }[]> {
+    const out: { kind: "skill" | "command"; name: string; description: string }[] = [];
+    const [skills, commands] = await Promise.allSettled([
+      this.lifecycle.client.call("skills.list", { sessionId }),
+      this.lifecycle.client.call("commands.list", { sessionId }),
+    ]);
+    if (skills.status === "fulfilled") {
+      const list = (skills.value as { skills?: unknown[] })?.skills ?? (Array.isArray(skills.value) ? skills.value : []);
+      for (const s of list as Record<string, unknown>[]) {
+        if (typeof s?.name === "string") {
+          out.push({ kind: "skill", name: s.name, description: String(s.description ?? "") });
+        }
+      }
+    }
+    if (commands.status === "fulfilled") {
+      const list = Array.isArray(commands.value) ? commands.value : [];
+      for (const c of list as Record<string, unknown>[]) {
+        if (typeof c?.name === "string") {
+          out.push({ kind: "command", name: c.name, description: String(c.description ?? "") });
+        }
+      }
+    }
+    if (skills.status === "rejected" && commands.status === "rejected") {
+      this.host.post({ t: "notify", kind: "warn", message: `技能列表获取失败：${errText(skills.reason)}` });
+    }
+    return out;
+  }
+
+  async runCommand(sessionId: string, line: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("commands.execute", { sessionId, line });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `命令执行失败：${errText(err)}` });
+    }
+  }
+
   async rename(sessionId: string, title: string): Promise<void> {
     try {
       await this.lifecycle.client.call("session.rename", { sessionId, title });
