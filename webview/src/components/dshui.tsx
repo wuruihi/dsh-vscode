@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Mermaid } from "./mermaid.js";
 
 /**
  * dsh-ui fence renderer — pragmatic subset of the GenUI vocabulary.
@@ -328,6 +329,10 @@ export function RenderNode({ node }: { node: Node }) {
       );
     case "chart":
       return <Chart node={node} />;
+    case "mermaid":
+      return <Mermaid code={String(node.code ?? "")} />;
+    case "plot":
+      return <Plot node={node} />;
     default:
       // Unknown / interactive (quiz, plot, mermaid, scene3d, …): degrade to code.
       return <pre className="code-block dui-code">{safeJson(node)}</pre>;
@@ -506,4 +511,94 @@ function clampPct(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, n));
+}
+
+// ---- plot: whitelisted-expression function graph (sampled polyline) ----
+
+const PLOT_FN_RE = /^[-+*/%().,\d\sxA-Fa-f]|^(sin|cos|tan|asin|acos|atan|sqrt|cbrt|exp|log|ln|abs|floor|ceil|round|min|max|pow|pi|tau|e|x)/;
+
+/** Compile a whitelisted math expression into f(x); null when unsafe/unparseable. */
+function compileExpr(expr: string): ((x: number) => number) | null {
+  const src = expr.trim();
+  if (!src || src.length > 200) return null;
+  if (!PLOT_FN_RE.test(src)) return null;
+  const idents = src.match(/[A-Za-z]+/g) ?? [];
+  const ALLOWED = new Set(["sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "cbrt", "exp", "log", "ln", "abs", "floor", "ceil", "round", "min", "max", "pow", "pi", "tau", "e", "x"]);
+  for (const id of idents) {
+    if (!ALLOWED.has(id)) return null;
+  }
+  try {
+    const f = new Function(
+      `"use strict"; const {sin,cos,tan,asin,acos,atan,sqrt,cbrt,exp,abs,floor,ceil,round,min,max,pow}=Math; const log=Math.log, ln=Math.log, pi=Math.PI, tau=Math.PI*2, e=Math.E; return (x) => (${src});`,
+    )() as (x: number) => number;
+    if (typeof f(1) !== "number") return null;
+    return f;
+  } catch {
+    return null;
+  }
+}
+
+const PALETTE = ["#3794ff", "#3fb950", "#d29922", "#f47067", "#bc8cff", "#39c5cf"];
+
+function Plot({ node }: { node: Node }) {
+  const xMin = typeof node.xMin === "number" ? node.xMin : -5;
+  const xMax = typeof node.xMax === "number" ? node.xMax : 5;
+  const width = 460;
+  const height = 240;
+  const pad = 28;
+  const series = Array.isArray(node.series) ? node.series : [];
+  const compiled = series
+    .map((s: Node) => ({ expr: String(s.expr ?? ""), f: compileExpr(String(s.expr ?? "")), label: s.label }))
+    .filter((s: { f: ((x: number) => number) | null }) => s.f);
+  const yBounds = (() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const s of compiled as { f: (x: number) => number }[]) {
+      for (let i = 0; i <= 200; i++) {
+        const v = s.f(xMin + ((xMax - xMin) * i) / 200);
+        if (Number.isFinite(v)) {
+          lo = Math.min(lo, v);
+          hi = Math.max(hi, v);
+        }
+      }
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
+      const mid = Number.isFinite(lo) ? lo : 0;
+      return { lo: mid - 1, hi: mid + 1 };
+    }
+    return { lo: lo - (hi - lo) * 0.08, hi: hi + (hi - lo) * 0.08 };
+  })();
+  const sx = (x: number): number => pad + ((x - xMin) / (xMax - xMin)) * (width - 2 * pad);
+  const sy = (y: number): number => height - pad - ((y - yBounds.lo) / (yBounds.hi - yBounds.lo)) * (height - 2 * pad);
+  return (
+    <div className="dui-plot-wrap">
+      {node.title ? <div className="dui-text dui-text-h3">{String(node.title)}</div> : null}
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%">
+        <rect x={pad} y={pad} width={width - 2 * pad} height={height - 2 * pad} fill="none" stroke="currentColor" strokeOpacity={0.2} rx={6} />
+        {yBounds.lo < 0 && yBounds.hi > 0 && (
+          <line x1={pad} x2={width - pad} y1={sy(0)} y2={sy(0)} stroke="currentColor" strokeOpacity={0.25} />
+        )}
+        {xMin < 0 && xMax > 0 && <line x1={sx(0)} x2={sx(0)} y1={pad} y2={height - pad} stroke="currentColor" strokeOpacity={0.25} />}
+        {(compiled as { f: (x: number) => number; expr: string; label?: string }[]).map((s, i) => {
+          const pts: string[] = [];
+          for (let k = 0; k <= 200; k++) {
+            const x = xMin + ((xMax - xMin) * k) / 200;
+            const y = s.f(x);
+            if (Number.isFinite(y)) pts.push(`${sx(x)},${sy(y)}`);
+          }
+          return <polyline key={i} points={pts.join(" ")} fill="none" stroke={PALETTE[i % PALETTE.length]} strokeWidth={1.8} />;
+        })}
+      </svg>
+      {(compiled as { label?: string; expr: string }[]).length > 0 && (
+        <div className="dui-plot-legend">
+          {(compiled as { label?: string; expr: string }[]).map((s, i) => (
+            <span key={i}>
+              <span className="dui-dot" style={{ background: PALETTE[i % PALETTE.length] }} />
+              {s.label ?? s.expr}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

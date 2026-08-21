@@ -267,6 +267,17 @@ body {
 .dui-acc-chev.is-open { transform: rotate(90deg); }
 .dui-acc-body { padding: 2px 12px 10px 28px; display: flex; flex-direction: column; gap: 8px; }
 
+/* mermaid (subset renderer) */
+.dui-mermaid-wrap { overflow-x: auto; padding: 6px 2px; color: var(--vscode-foreground); }
+.dui-mnode { fill: var(--vscode-editorWidget-background, #252526); stroke: var(--vscode-focusBorder, #3794ff); stroke-width: 1.2; }
+.dui-mnode-label { fill: var(--vscode-foreground); font-size: 11px; }
+.dui-edge-label { fill: var(--vscode-descriptionForeground); font-size: 10px; }
+
+/* plot */
+.dui-plot-wrap { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; color: var(--vscode-foreground); }
+.dui-plot-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.dui-plot-legend .dui-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+
 .dui-bars { display: flex; gap: 12px; height: 150px; padding-top: 4px; }
 .dui-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; height: 100%; }
 .dui-bar-v { font-size: 10.5px; color: var(--vscode-descriptionForeground); flex: none; }
