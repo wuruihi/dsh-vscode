@@ -5,29 +5,43 @@ import remarkBreaks from "remark-breaks";
 import { DshUi } from "./dshui.js";
 
 /**
- * Markdown renderer. Two readability decisions borrowed from the Claude Code
- * panel (verified against its shipped CSS):
- *  - remark-breaks: single newlines become <br>. CommonMark folds them into
- *    spaces, which glues DSH model output (Chinese single-newline paragraphing)
- *    into walls of text.
- *  - headings are demoted one level (h1→h2 …) — chat panels are not documents.
- * ```dsh-ui fences render through the local GenUI subset (dshui.tsx); while
- * `live` (streaming) incomplete specs show a placeholder.
+ * Assistant markdown renderer with HOST-ALIGNED dsh-ui fence handling.
+ *
+ * The native GUI treats dsh-ui fences as first-class segments (its own
+ * micromark/mdast pipeline + a fence registry the genui plugin hooks), and
+ * its incremental parser streams them. react-markdown gives us CommonMark
+ * fence semantics instead — and models DO break those (opener glued to a
+ * prose line, missing closing fence, prose swallowed inside an unclosed
+ * block). Feeding broken fences to CommonMark renders the whole spec as
+ * prose, so the JSON repair layer never even runs.
+ *
+ * Architecture here: a dedicated splitter extracts dsh-ui segments BEFORE
+ * markdown parsing, using structural scanning (balanced-brace walk) that is
+ * immune to every observed fence-breaking habit. Whatever the model does,
+ * the fence boundary is "first balanced JSON value after the opener" —
+ * text before/after stays ordinary markdown. react-markdown then only ever
+ * sees clean prose.
  */
 
-const remarkPlugins = [remarkGfm, remarkBreaks] as const;
+interface Segment {
+  kind: "text" | "fence";
+  text: string; // prose for text segments, the raw spec for fence segments
+}
 
-/** Index just past the balanced JSON value starting at/after `pos`
- *  (string-aware, mixed brackets); -1 when none. Balance only — validity is
- *  the JSON repair layer's business (dshui.tsx). */
-function balancedJsonEnd(s: string, pos: number): number {
+/** First index of `{` or `[` at/after pos, skipping whitespace; -1 if none. */
+function specStart(s: string, pos: number): number {
   let i = pos;
   while (i < s.length && /\s/.test(s[i])) i++;
-  if (s[i] !== "{" && s[i] !== "[") return -1;
+  return s[i] === "{" || s[i] === "[" ? i : -1;
+}
+
+/** Index just past the balanced JSON value at pos (string-aware, mixed
+ *  brackets). Balance only — JSON validity is dshui.tsx's repair business. */
+function balancedEnd(s: string, pos: number): number {
   let depth = 0;
   let inStr = false;
   let esc = false;
-  for (let k = i; k < s.length; k++) {
+  for (let k = pos; k < s.length; k++) {
     const ch = s[k];
     if (inStr) {
       if (esc) esc = false;
@@ -45,40 +59,90 @@ function balancedJsonEnd(s: string, pos: number): number {
   return -1;
 }
 
-/** Markdown-level dsh-ui fence repairs. The JSON repair layer (dshui.tsx)
- *  never sees a fence the markdown parser does not recognize, so these two
- *  model habits must be fixed before parsing:
- *  1. opening fence glued to the end of a prose line ("….```dsh-ui") — a
- *     fence must start a line, otherwise the whole spec renders as prose;
- *  2. missing closing fence — insert one right after the balanced JSON so
- *     trailing prose stays markdown instead of being swallowed as code. */
-function normalizeDshUiFences(text: string): string {
-  if (!text.includes("```dsh-ui")) return text;
-  let s = text.replace(/(\S)[ \t]*```dsh-ui/g, "$1\n```dsh-ui");
-  const FENCE = /```dsh-ui[^\n]*\n/g;
-  let out = "";
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = FENCE.exec(s))) {
-    const contentStart = m.index + m[0].length;
-    const rest = s.slice(contentStart);
-    if (/^```/m.test(rest) || rest.includes("\n```")) continue; // closer exists — parser handles it
-    const end = balancedJsonEnd(s, contentStart);
-    if (end < 0) continue; // no balanced JSON: fence-to-EOF is legal markdown
-    out += `${s.slice(last, end)}\n\`\`\``;
-    last = end;
-    FENCE.lastIndex = end;
+/** Split accumulated assistant text into prose and dsh-ui fence segments.
+ *  Line-walks with a plain-fence state so a ``` block CONTAINING the literal
+ *  "```dsh-ui" as sample code never false-positives. The opener may be glued
+ *  to a prose line ("….```dsh-ui") — the scanner recognizes it anyway. An
+ *  opener whose JSON never balances consumes the rest (streaming partial, or
+ *  a truncated tail the JSON repair layer degrades). */
+function splitDshUiSegments(text: string): Segment[] {
+  if (!text.includes("```dsh-ui")) return [{ kind: "text", text }];
+  const lines = text.split("\n");
+  // find the first dsh-ui opener outside a plain code fence
+  let inPlainFence = false;
+  let openerLine = -1;
+  let prosePrefix: string[] = [];
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    if (inPlainFence) {
+      if (/^\s*```/.test(line)) inPlainFence = false;
+      continue;
+    }
+    const hit = line.indexOf("```dsh-ui");
+    if (hit >= 0) {
+      openerLine = li;
+      const prefix = line.slice(0, hit);
+      if (prefix.trim()) prosePrefix.push(prefix);
+      break;
+    }
+    if (/^\s*```/.test(line)) inPlainFence = true;
+    else prosePrefix.push(line);
   }
-  return out + s.slice(last);
+  if (openerLine < 0) return [{ kind: "text", text }];
+  const segs: Segment[] = [];
+  if (prosePrefix.length > 0) segs.push({ kind: "text", text: prosePrefix.join("\n") });
+  const rest = lines.slice(openerLine + 1).join("\n");
+  const start = specStart(rest, 0);
+  if (start < 0) {
+    // no JSON behind the opener at all: treat the opener line as prose
+    const rebuilt = [...prosePrefix, lines[openerLine], ...lines.slice(openerLine + 1)].join("\n");
+    return [{ kind: "text", text: rebuilt }];
+  }
+  const end = balancedEnd(rest, start);
+  if (end < 0) {
+    // never balances: streaming partial or truncated — take the rest
+    segs.push({ kind: "fence", text: rest.slice(start) });
+    return segs;
+  }
+  segs.push({ kind: "fence", text: rest.slice(start, end) });
+  // after the balanced JSON: drop ONE leading closing fence (if present),
+  // then recurse on the remainder so nested plain fences keep their state
+  let tail = rest.slice(end);
+  const tm = /^[ \t]*\r?\n?[ \t]*```[^\n]*\n?/.exec(tail);
+  if (tm) tail = tail.slice(tm[0].length);
+  else {
+    // same-line closer? e.g. `} ``` ` — rare; strip trailing ``` on line 1
+    tail = tail.replace(/^([ \t]*)```/, "$1");
+  }
+  const tailSegs = tail.trim() ? splitDshUiSegments(tail) : [];
+  return [...segs, ...tailSegs];
 }
 
+/** Memoized prose runner: early segments keep element identity across
+ *  streaming re-renders, so only the growing tail re-parses (the same
+ *  freeze-the-stable-prefix idea as the host's incremental parser, at
+ *  segment granularity). */
+const TextRun = memo(function TextRun({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
+const mdComponents: Components = makeComponents();
+
 export const Markdown = memo(function Markdown({ text, live }: { text: string; live?: boolean }) {
-  const components = useMemo<Components>(() => makeComponents(live), [live]);
+  const segments = useMemo(() => splitDshUiSegments(text), [text]);
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[...remarkPlugins]} components={components}>
-        {normalizeDshUiFences(text)}
-      </ReactMarkdown>
+      {segments.map((seg, i) =>
+        seg.kind === "text" ? (
+          <TextRun key={i} text={seg.text} />
+        ) : (
+          <DshUi key={`f${i}`} spec={seg.text} live={live} />
+        ),
+      )}
     </div>
   );
 });
@@ -89,18 +153,19 @@ function Demote({ as, children }: { as: "h2" | "h3" | "h4" | "h5" | "h5" | "h6";
   return <Tag>{children}</Tag>;
 }
 
-function makeComponents(live?: boolean): Components {
+function makeComponents(): Components {
   return {
     pre: ({ children }) => <pre className="code-block">{children}</pre>,
+    // Defensive tail: the splitter already extracts every dsh-ui fence, but
+    // if a well-formed one still reaches react-markdown, render it as UI.
     code: ({ className, children }) => {
       const lang = /language-(\w[\w-]*)/.exec(className ?? "")?.[1];
-      const text = String(children ?? "");
+      const codeText = String(children ?? "");
       if (lang === "dsh-ui") {
-        // Strip the trailing newline react-markdown keeps inside fenced content.
-        return <DshUi spec={text.replace(/\n$/, "")} live={live} />;
+        return <DshUi spec={codeText.replace(/\n$/, "")} />;
       }
-      if (!className) return <code>{text}</code>;
-      return <code className={className}>{text}</code>;
+      if (!className) return <code>{codeText}</code>;
+      return <code className={className}>{codeText}</code>;
     },
     h1: ({ children }) => <Demote as="h2">{children}</Demote>,
     h2: ({ children }) => <Demote as="h3">{children}</Demote>,
@@ -113,6 +178,6 @@ function makeComponents(live?: boolean): Components {
         {children}
       </a>
     ),
-    img: ({ src, alt }) => <img className="md-img" src={typeof src === "string" ? src : undefined} alt={alt ?? ""} />,
+    img: ({ src, alt }) => (typeof src === "string" && /^https:/.test(src) ? <img className="md-img" src={src} alt={alt ?? ""} /> : null),
   };
 }

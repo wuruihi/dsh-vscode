@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.4.13",
+  "version": "0.5.0",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
