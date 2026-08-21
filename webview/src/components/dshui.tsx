@@ -139,13 +139,17 @@ function repairSpec(raw: string): Node | null {
       if (/^[\]}]+$/.test(text.slice(pos))) break; // trailing stray closers
       return null; // structural shape we don't understand — bail, never guess
     }
+    // An unclosed ```dsh-ui fence swallows everything after it as code: the
+    // spec JSON ends complete and the model's prose continues INSIDE the
+    // block. A non-structural (non `{`/`[`) tail is prose contamination —
+    // the root itself is complete and valid, so ignore the tail.
+    if (text[pos] !== "{" && text[pos] !== "[") break;
     const nxt = scanValue(text, pos);
-    if (!nxt) return null;
+    if (!nxt) break; // unparseable orphan: keep what we have, drop the tail
     orphans.push(nxt[1]);
     pos = nxt[0];
   }
-  if (orphans.length === 0) return null;
-  root.items = [...root.items, ...orphans];
+  if (orphans.length > 0) root.items = [...root.items, ...orphans];
   return root;
 }
 
