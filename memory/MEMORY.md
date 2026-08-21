@@ -8,6 +8,16 @@
 - **发布者**：`wurui`（用户 GitHub: wuruihi，ID 176995251）
 - 命令 ID / 配置键前缀仍是 `dsh-vscode.*`（内部标识，勿改，改了破坏用户键位/设置）
 
+## IDE 能力桥（v0.4.0，V2 第一项）
+
+- 架构：模型工具（ide_active_file / ide_selection / ide_diagnostics / ide_open_file）
+  → DSH 插件 `~/.dsh/plugins/dsh-ide-bridge`（defineTool + ctx.tools.register，参照 better-sidebar 备份插件）
+  → HTTP 127.0.0.1:3187 + Bearer token（发现文件 `~/.dsh/dsh-vscode-ide.json`，扩展启动写、退出删）
+  → dsh-vscode 扩展 `src/ide/bridge.ts`（vscode.languages.getDiagnostics / activeTextEditor / showTextDocument）
+- 插件依赖解析：宿主别名 + 兜底 junction（插件目录 node_modules → ~/.dsh/profiles/node_modules）
+- 插件改动需重启 dsh web；扩展改动需 Reload Window；两者可独立降级（桥不可达时工具报友好错误）
+- defineTool 契约：{name, description, parameters:{p:{type,required,description}}, output:{schema}, async execute(args, exec){exec.signal.throwIfAborted()}}
+
 ## 发布流程
 
 - 本地构建：`corepack pnpm compile`（门控）→ `build` → `vsce package --no-dependencies`
