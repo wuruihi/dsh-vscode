@@ -45,6 +45,10 @@ export function App() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [renaming, setRenaming] = useState<{ sessionId: string; title: string } | undefined>();
   const [running, setRunning] = useState(false);
+  // plan mode + todos arrive as session projections ("plan" / "todos")
+  const [planActive, setPlanActive] = useState(false);
+  const [todos, setTodos] = useState<{ content: string; status: string }[] | null>(null);
+  const [todoOpen, setTodoOpen] = useState(false);
   // @ file completion + / skill-command completion: attachments + popup state
   const [fileAtt, setFileAtt] = useState<{ path: string; rel: string }[]>([]);
   const [filePopup, setFilePopup] = useState<{ items: { path: string; rel: string }[]; sel: number; tokenStart: number } | undefined>();
@@ -157,6 +161,10 @@ export function App() {
             const v = m.value as any;
             const pct = typeof v === "number" ? v : (v.percent ?? v.ratio);
             if (typeof pct === "number") setTokens((t) => `${t ? `${t} · ` : ""}ctx ${Math.round(pct * 100)}%`);
+          } else if (m.key === "plan") {
+            setPlanActive(Boolean((m.value as any)?.active));
+          } else if (m.key === "todos") {
+            setTodos(Array.isArray(m.value) ? (m.value as { content: string; status: string }[]) : null);
           }
           break;
         case "notify":
@@ -180,6 +188,14 @@ export function App() {
     window.addEventListener("dsh-open-diff", openDiff);
     return () => window.removeEventListener("dsh-open-diff", openDiff);
   }, []);
+
+  // reset session-scoped UI state when the current session changes (fresh
+  // values arrive right after via the seeded projections in the history load)
+  useEffect(() => {
+    setPlanActive(false);
+    setTodos(null);
+    setTodoOpen(false);
+  }, [current]);
 
   // Restore scroll after prepended history (runs before the pinned autoscroll
   // effect by declaration order; prepending never coincides with pin-to-bottom
@@ -488,6 +504,49 @@ export function App() {
         </div>
       )}
 
+      {/* plan mode indicator */}
+      {planActive && (
+        <div className="plan-strip">
+          <span>🗺 Plan 模式 — 只读研究，方案需批准后执行</span>
+          <span className="spacer" />
+          <button
+            className="link-btn"
+            title="执行 /plan off"
+            onClick={() => current && post({ t: "run-command", sessionId: current, line: "/plan off" })}
+          >
+            退出
+          </button>
+        </div>
+      )}
+
+      {/* todo progress */}
+      {todos && todos.length > 0 && (() => {
+        const done = todos.filter((t) => t.status === "completed").length;
+        const cur = todos.find((t) => t.status === "in_progress");
+        return (
+          <div className="todo-strip">
+            <button className="todo-head" onClick={() => setTodoOpen((v) => !v)} title="展开/收起任务清单">
+              <span className="todo-count">{done}/{todos.length}</span>
+              <span className="todo-bar">
+                <span className="todo-bar-fill" style={{ width: `${todos.length ? (done / todos.length) * 100 : 0}%` }} />
+              </span>
+              <span className="todo-cur">{cur ? cur.content : done === todos.length ? "全部完成" : "…"}</span>
+              <span className="todo-chev">{todoOpen ? "▾" : "▸"}</span>
+            </button>
+            {todoOpen && (
+              <ul className="todo-list">
+                {todos.map((t, i) => (
+                  <li key={i} className={`todo-item is-${t.status}`}>
+                    <span className="todo-mark">{t.status === "completed" ? "✓" : t.status === "in_progress" ? "●" : "○"}</span>
+                    {t.content}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })()}
+
       {/* composer */}
       <div className="composer">
         {/* slash menu (skills + commands) */}
@@ -574,6 +633,17 @@ export function App() {
               if (e.key === "Escape" && (filePopup || slashPopup)) {
                 setFilePopup(undefined);
                 setSlashPopup(undefined);
+                return;
+              }
+              if (e.key === "Escape") {
+                // CC muscle memory: Esc interrupts the run; on an idle box it
+                // clears the draft.
+                if (busy) {
+                  e.preventDefault();
+                  if (current) post({ t: "cancel", sessionId: current });
+                } else if (draft) {
+                  setDraft("");
+                }
                 return;
               }
               if (filePopup && filePopup.items.length > 0) {

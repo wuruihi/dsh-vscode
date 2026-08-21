@@ -485,6 +485,32 @@ body {
 .file-item .slash-name { font-family: var(--vscode-uiFontFamilyMonospace, monospace); font-weight: 600; flex: none; }
 .file-item .slash-desc { color: var(--vscode-descriptionForeground); margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* plan mode indicator */
+.plan-strip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 12px; font-size: 11.5px;
+  background: rgba(204,167,0,.10);
+  border-top: 1px solid rgba(204,167,0,.35);
+  color: var(--vscode-charts-yellow, #cca700);
+}
+
+/* todo progress */
+.todo-strip { border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,.18)); padding: 4px 12px; }
+.todo-head { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 11.5px; text-align: left; }
+.todo-count { flex: none; font-weight: 600; color: var(--vscode-charts-blue, #3794ff); }
+.todo-bar { flex: none; width: 90px; height: 4px; border-radius: 2px; background: rgba(128,128,128,.25); overflow: hidden; }
+.todo-bar-fill { display: block; height: 100%; background: var(--vscode-testing-iconPassed, #73c991); transition: width .3s; }
+.todo-cur { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); }
+.todo-chev { flex: none; color: var(--vscode-descriptionForeground); }
+.todo-list { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.todo-item { display: flex; gap: 6px; font-size: 11.5px; align-items: baseline; }
+.todo-mark { flex: none; width: 14px; }
+.is-completed { color: var(--vscode-descriptionForeground); text-decoration: line-through; }
+.is-completed .todo-mark { color: var(--vscode-testing-iconPassed, #73c991); text-decoration: none; }
+.is-in_progress { color: var(--vscode-foreground); font-weight: 500; }
+.is-in_progress .todo-mark { color: var(--vscode-charts-blue, #3794ff); }
+.is-pending { color: var(--vscode-descriptionForeground); }
+
 /* attachment chips */
 .attach-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
 .attach-chip {

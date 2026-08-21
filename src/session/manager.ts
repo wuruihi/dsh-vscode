@@ -245,6 +245,11 @@ export class SessionManager {
         if (changed) this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
       }
       this.host.post({ t: "history", sessionId, entries: h?.events ?? [], hasMore: !!h?.hasMore });
+      // Seed UI projections (plan mode / todos) from the history page so a
+      // switched-to session shows its state before any live push arrives.
+      const pv = (p?.values ?? p ?? {}) as Record<string, any>;
+      this.host.post({ t: "projection", sessionId, key: "plan", value: pv.plan ?? { active: false } });
+      this.host.post({ t: "projection", sessionId, key: "todos", value: pv.todos ?? null });
     } catch (err) {
       warn(`[manager] history failed: ${String(err)}`);
       this.host.post({ t: "history", sessionId, entries: [], hasMore: false });
