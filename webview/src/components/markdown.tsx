@@ -17,12 +17,67 @@ import { DshUi } from "./dshui.js";
 
 const remarkPlugins = [remarkGfm, remarkBreaks] as const;
 
+/** Index just past the balanced JSON value starting at/after `pos`
+ *  (string-aware, mixed brackets); -1 when none. Balance only — validity is
+ *  the JSON repair layer's business (dshui.tsx). */
+function balancedJsonEnd(s: string, pos: number): number {
+  let i = pos;
+  while (i < s.length && /\s/.test(s[i])) i++;
+  if (s[i] !== "{" && s[i] !== "[") return -1;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let k = i; k < s.length; k++) {
+    const ch = s[k];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") {
+      depth--;
+      if (depth === 0) return k + 1;
+    }
+  }
+  return -1;
+}
+
+/** Markdown-level dsh-ui fence repairs. The JSON repair layer (dshui.tsx)
+ *  never sees a fence the markdown parser does not recognize, so these two
+ *  model habits must be fixed before parsing:
+ *  1. opening fence glued to the end of a prose line ("….```dsh-ui") — a
+ *     fence must start a line, otherwise the whole spec renders as prose;
+ *  2. missing closing fence — insert one right after the balanced JSON so
+ *     trailing prose stays markdown instead of being swallowed as code. */
+function normalizeDshUiFences(text: string): string {
+  if (!text.includes("```dsh-ui")) return text;
+  let s = text.replace(/(\S)[ \t]*```dsh-ui/g, "$1\n```dsh-ui");
+  const FENCE = /```dsh-ui[^\n]*\n/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FENCE.exec(s))) {
+    const contentStart = m.index + m[0].length;
+    const rest = s.slice(contentStart);
+    if (/^```/m.test(rest) || rest.includes("\n```")) continue; // closer exists — parser handles it
+    const end = balancedJsonEnd(s, contentStart);
+    if (end < 0) continue; // no balanced JSON: fence-to-EOF is legal markdown
+    out += `${s.slice(last, end)}\n\`\`\``;
+    last = end;
+    FENCE.lastIndex = end;
+  }
+  return out + s.slice(last);
+}
+
 export const Markdown = memo(function Markdown({ text, live }: { text: string; live?: boolean }) {
   const components = useMemo<Components>(() => makeComponents(live), [live]);
   return (
     <div className="md">
       <ReactMarkdown remarkPlugins={[...remarkPlugins]} components={components}>
-        {text}
+        {normalizeDshUiFences(text)}
       </ReactMarkdown>
     </div>
   );
