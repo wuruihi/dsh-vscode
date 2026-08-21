@@ -106,6 +106,8 @@ body {
   border: none;
   padding: 0;
   white-space: normal;
+  overflow-wrap: anywhere; /* inherited: long urls / paths in prose wrap */
+  min-width: 0;
 }
 .cursor { color: var(--vscode-charts-blue, #3794ff); animation: pulse 1s infinite; }
 
@@ -159,6 +161,8 @@ body {
   border-radius: 10px; padding: 12px 14px; margin: 8px 0;
   display: flex; flex-direction: column; gap: 10px;
   background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 96%, var(--vscode-foreground, #ccc) 4%);
+  min-width: 0;
+  overflow-wrap: anywhere; /* inherited by every dui text child: nothing may push past the card */
 }
 .dui-pending { color: var(--vscode-descriptionForeground); font-size: 12px; align-items: center; }
 .dui-broken { gap: 6px; }
@@ -309,6 +313,7 @@ body {
    (pre-wrap fidelity, demoted headings, 2em list indent) tuned for CJK:
    line-height 1.65 + slightly airier paragraph rhythm. */
 .md {
+  overflow-wrap: anywhere;
   /* CJK glyphs are visually denser than latin at equal px — floor at 14px,
      still respect a larger user font setting. */
   font-size: max(14px, var(--vscode-font-size, 13px));

@@ -397,13 +397,21 @@ function extractUserPayload(data: unknown): { text: string; files: string[] } {
       if (c && typeof c.text === "string" && c.text) consider(c.text);
     }
   } else if (typeof d.content === "string") consider(d.content);
-  return { text: stripSystemContext(parts.join("\n\n")), files };
+  const raw = parts.join("\n\n");
+  // Instruction injections (AGENTS.md / CLAUDE.md / skill docs) arrive as
+  // standalone MULTI-paragraph documents — paragraph-level stripping would
+  // only remove the head paragraph and keep the whole body. A message whose
+  // first paragraph is an instruction head is an injection carrier: drop all.
+  const firstLine = (raw.split(/\n\s*\n/, 1)[0] ?? "").split("\n", 1)[0]?.trim() ?? "";
+  if (/^Instructions from\b/.test(firstLine)) return { text: "", files };
+  return { text: stripSystemContext(raw), files };
 }
 
 // ---- stripSystemContext (paragraph-level, Obsidian-proven core + VSCode extras) ----
 
 /** Paragraph heads that mark a DSH-injected block (snapshot / policy notice). */
 const INJECTED_HEADS = [
+  /^Instructions from\b/,
   /^Current runtime context\b/,
   /^Current DSH file policy:/,
   /^The DSH file policy changed\b/,
