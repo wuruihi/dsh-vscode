@@ -18,6 +18,15 @@
 - 插件改动需重启 dsh web；扩展改动需 Reload Window；两者可独立降级（桥不可达时工具报友好错误）
 - defineTool 契约：{name, description, parameters:{p:{type,required,description}}, output:{schema}, async execute(args, exec){exec.signal.throwIfAborted()}}
 
+## V2 完成状态（0.4.5 收口）
+
+- 排版（0.3.x）：14px 中文下限 + 结构化写作，已闭环
+- live 状态条移到输入框上方（0.4.2）
+- IDE 能力桥（0.4.0/0.4.1）：见上节；0.4.1 修诊断过滤的 Windows 路径失配（必须 `Uri.file()` 规范化后 `toString()` 比对）
+- @ 文件引用（0.4.3/0.4.4）：`@` 触发补全（防抖 120ms + reqId 对账）→ 📎 chip → 协议 `{type:"file"}` 占位 → 宿主 `expandFileParts` 展开（2 万字符截断）。气泡只显示一句话 + chips：fold 层识别 `[引用文件 X]` 块抽标签丢正文，对历史消息同样生效
+- dsh-ui 渲染器补齐（0.4.5）：mermaid（自研 SVG 子集渲染器：graph TD/LR、三种节点形、实线/虚线/带标签边，最长路分层布局，解析失败降级代码块）+ plot（白名单表达式编译 + 采样折线）。quiz/scene3d 有意不做（频率低/依赖重）
+- 遗留：市场最新仍是 0.3.6，0.4.x 系列 vsix 未上传市场（用户手动网页上传，时机由用户定）
+
 ## 发布流程
 
 - 本地构建：`corepack pnpm compile`（门控）→ `build` → `vsce package --no-dependencies`
