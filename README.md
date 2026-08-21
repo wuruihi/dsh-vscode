@@ -13,6 +13,7 @@ VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github
 - **原生 diff**：编辑类工具卡上「查看 diff」→ VSCode 原生 diff 编辑器（逆序反推原文，URI 带版本号防陈旧缓存）
 - **queue / steer**：运行中排队追加或中途引导，队列可见可删
 - **模型选择**：provider 分组 + reasoning effort（发送 `m.id`）
+- **IDE 能力桥**（v0.4.0，需搭配 `dsh-ide-bridge` 插件）：模型可调用 `ide_active_file` / `ide_selection` / `ide_diagnostics` / `ide_open_file`——AI 能看见你正在看的文件、选区和报错，修完直接定位到行展示给你
 
 ## 前置
 

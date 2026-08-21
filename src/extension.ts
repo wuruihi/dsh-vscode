@@ -3,6 +3,7 @@ import { DshLifecycle } from "./connection/lifecycle.js";
 import { SessionManager } from "./session/manager.js";
 import { DshChatView } from "./ui/panel.js";
 import { DiffService } from "./diff/provider.js";
+import { IdeBridge } from "./ide/bridge.js";
 import { getLog, log } from "./log.js";
 import type { ViewToExt } from "../webview/src/protocol.js";
 
@@ -15,8 +16,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const manager = new SessionManager(lifecycle, { post: (m) => panel.post(m) }, context.globalState);
   const diff = new DiffService();
   manager.bindDiff(diff);
+  const ideBridge = new IdeBridge();
+  ideBridge.start(String(context.extension.packageJSON.version ?? ""));
 
-  context.subscriptions.push(lifecycle, panel, diff);
+  context.subscriptions.push(lifecycle, panel, diff, ideBridge);
 
   // Webview provider registration.
   context.subscriptions.push(
