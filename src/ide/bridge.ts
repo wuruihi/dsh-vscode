@@ -156,11 +156,17 @@ export class IdeBridge implements vscode.Disposable {
       ),
     );
     const max = Math.max(1, Math.min(body.max ?? 50, 200));
+    // Normalize the filter through Uri.file(): the diagnostics table is keyed
+    // by canonical VSCode uris — raw Windows paths (lowercase drive letter,
+    // mixed slashes) miss otherwise. Compare on uri.toString().
+    const filterUri = body.file ? vscode.Uri.file(body.file) : undefined;
+    const fileMatch = (uri: vscode.Uri): boolean =>
+      filterUri === undefined || uri.toString() === filterUri.toString();
     const entries: unknown[] = [];
     let total = 0;
-    const push = (file: string, d: vscode.Diagnostic): void => {
+    const push = (file: string, uri: vscode.Uri, d: vscode.Diagnostic): void => {
       const sev = SEVERITIES[d.severity] ?? "warning";
-      if (!want.has(sev)) return;
+      if (!want.has(sev) || !fileMatch(uri)) return;
       total += 1;
       if (entries.length >= max) return;
       entries.push({
@@ -173,14 +179,8 @@ export class IdeBridge implements vscode.Disposable {
         code: typeof d.code === "object" && d.code ? String(d.code.value) : d.code,
       });
     };
-    if (body.file) {
-      for (const d of vscode.languages.getDiagnostics(vscode.Uri.file(body.file))) {
-        push(body.file, d);
-      }
-    } else {
-      for (const [uri, diags] of vscode.languages.getDiagnostics()) {
-        for (const d of diags) push(uri.fsPath, d);
-      }
+    for (const [uri, diags] of vscode.languages.getDiagnostics()) {
+      for (const d of diags) push(uri.fsPath, uri, d);
     }
     return { total, truncated: total > entries.length, entries };
   }
