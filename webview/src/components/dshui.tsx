@@ -16,6 +16,57 @@ type Node = Record<string, any>;
 // dominant failure: root object closes after the first items element, the
 // remaining components follow as orphan top-level values (+ stray `]}`).
 
+/** Bracket-balance repair for a spec fragment: when a `}` arrives while the
+ *  container stack top is `[` (impossible in valid JSON — the model closed an
+ *  object while an array stayed open), insert the missing `]`; auto-close
+ *  whatever is left open at the end (truncation tails). Null = not fixable
+ *  (stack underflow, mid-string cut, or too many fixes). */
+function balanceClose(s: string): string | null {
+  const stack: string[] = [];
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  let fixes = 0;
+  for (const ch of s) {
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch);
+      out += ch;
+      continue;
+    }
+    if (ch === "}") {
+      if (stack[stack.length - 1] === "[") {
+        if (++fixes > 8) return null;
+        out += "]";
+        stack.pop();
+      }
+      if (stack.pop() !== "{") return null;
+      out += ch;
+      continue;
+    }
+    if (ch === "]") {
+      if (stack.pop() !== "[") return null;
+      out += ch;
+      continue;
+    }
+    out += ch;
+  }
+  if (inStr) return null; // mid-string truncation: never guess
+  while (stack.length) out += stack.pop() === "{" ? "}" : "]";
+  return out;
+}
+
 function scanValue(text: string, pos: number): [number, unknown] | null {
   let i = pos;
   while (i < text.length && /\s/.test(text[i])) i++;
@@ -48,11 +99,22 @@ function scanValue(text: string, pos: number): [number, unknown] | null {
     else if (ch === close) {
       depth--;
       if (depth === 0) {
+        const slice = text.slice(start, k + 1);
         try {
-          return [k + 1, JSON.parse(text.slice(start, k + 1))];
+          return [k + 1, JSON.parse(slice)];
         } catch {
-          return null;
+          /* balanced-but-invalid (e.g. items [ left open by an early root
+             close): retry with the bracket-balance repair before giving up */
         }
+        const balanced = balanceClose(slice);
+        if (balanced) {
+          try {
+            return [k + 1, JSON.parse(balanced)];
+          } catch {
+            /* fallthrough */
+          }
+        }
+        return null;
       }
     }
   }
@@ -98,13 +160,24 @@ function parseSpec(raw: string): Node | null {
   } catch {
     /* fallthrough */
   }
+  const cheap = cheapRepairs(raw);
   try {
-    const v = JSON.parse(cheapRepairs(raw));
+    const v = JSON.parse(cheap);
     return v && typeof v === "object" ? v : null;
   } catch {
     /* fallthrough */
   }
-  const fixed = repairSpec(cheapRepairs(raw));
+  // truncation tails: the fence settled while containers were still open
+  const closed = balanceClose(cheap);
+  if (closed) {
+    try {
+      const v = JSON.parse(closed);
+      if (v && typeof v === "object") return v;
+    } catch {
+      /* fallthrough */
+    }
+  }
+  const fixed = repairSpec(cheap);
   return fixed;
 }
 
