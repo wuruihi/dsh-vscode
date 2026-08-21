@@ -32,7 +32,10 @@ export interface ModelsData {
 
 export type PromptPart =
   | { type: "text"; text: string }
-  | { type: "image"; mediaType: string; data: string; name?: string };
+  | { type: "image"; mediaType: string; data: string; name?: string }
+  /** Placeholder expanded host-side into a real [引用文件 …] text part
+   *  (the webview cannot read the filesystem). */
+  | { type: "file"; path: string; rel?: string };
 
 export interface QueueItem {
   id: string;
@@ -90,6 +93,7 @@ export type ExtToView =
   | { t: "permission"; data: PermissionData }
   | { t: "presets"; data: PresetData }
   | { t: "inject-attachment"; label: string; text: string }
+  | { t: "files"; reqId: number; items: { path: string; rel: string }[] }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string };
 
 /** webview -> extension host */
@@ -110,5 +114,6 @@ export type ViewToExt =
   | { t: "get-models"; sessionId: string }
   | { t: "queue-remove"; sessionId: string; itemId: string }
   | { t: "load-older"; sessionId: string; beforeSeq: number }
+  | { t: "list-files"; reqId: number; query: string }
   | { t: "open-diff"; callId: string }
   | { t: "log"; message: string };

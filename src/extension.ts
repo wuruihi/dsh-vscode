@@ -4,6 +4,7 @@ import { SessionManager } from "./session/manager.js";
 import { DshChatView } from "./ui/panel.js";
 import { DiffService } from "./diff/provider.js";
 import { IdeBridge } from "./ide/bridge.js";
+import { searchWorkspaceFiles } from "./context/files.js";
 import { getLog, log } from "./log.js";
 import type { ViewToExt } from "../webview/src/protocol.js";
 
@@ -104,6 +105,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         break;
       case "load-older":
         void manager.loadOlder(m.sessionId, m.beforeSeq);
+        break;
+      case "list-files":
+        searchWorkspaceFiles(m.query).then((items) =>
+          panel.post({ t: "files", reqId: m.reqId, items }),
+        );
         break;
       case "open-diff":
         void diff.openForCall(m.callId).then((opened) => {

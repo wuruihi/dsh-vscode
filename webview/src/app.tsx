@@ -45,11 +45,17 @@ export function App() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [renaming, setRenaming] = useState<{ sessionId: string; title: string } | undefined>();
   const [running, setRunning] = useState(false);
+  // @ file completion: attachments + popup state
+  const [fileAtt, setFileAtt] = useState<{ path: string; rel: string }[]>([]);
+  const [filePopup, setFilePopup] = useState<{ items: { path: string; rel: string }[]; sel: number; tokenStart: number } | undefined>();
+  const fileReqRef = useRef(0);
+  const fileDebounceRef = useRef<number>(0);
 
   const foldRef = useRef(new ConversationFold());
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const hasMoreRef = useRef(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const loadingOlderRef = useRef(false);
   // Scroll anchor for prepended history: {height, top} captured before the
   // load fires; after render, scrollTop is restored so the viewport stays on
@@ -116,6 +122,14 @@ export function App() {
           break;
         case "presets":
           setPresetData(m.data);
+          break;
+        case "files":
+          // Only the latest request renders; stale responses are dropped.
+          setFilePopup((cur) =>
+            m.reqId === fileReqRef.current && cur
+              ? { ...cur, items: m.items, sel: Math.min(cur.sel, Math.max(0, m.items.length - 1)) }
+              : cur,
+          );
           break;
         case "queue":
           setQueue(m.items);
@@ -200,13 +214,51 @@ export function App() {
     if (!current || parts.length === 0) return;
     post({ t: "prompt", sessionId: current, mode, parts });
     setDraft("");
+    setFileAtt([]);
+    setFilePopup(undefined);
     pinnedRef.current = true;
+  };
+
+  /** Draft change + @token detection (token = @word before the caret). */
+  const onDraftChange = (value: string, caret: number): void => {
+    setDraft(value);
+    const before = value.slice(0, caret);
+    const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
+    if (!m) {
+      setFilePopup(undefined);
+      return;
+    }
+    const tokenStart = caret - m[1].length - 1; // index of '@'
+    setFilePopup({ items: [], sel: 0, tokenStart });
+    window.clearTimeout(fileDebounceRef.current);
+    fileDebounceRef.current = window.setTimeout(() => {
+      fileReqRef.current += 1;
+      post({ t: "list-files", reqId: fileReqRef.current, query: m[1] });
+    }, 120);
+  };
+
+  /** Pick a file from the popup: strip the @token, add an attachment chip. */
+  const pickFile = (f: { path: string; rel: string }): void => {
+    setFilePopup((p) => {
+      if (!p) return undefined;
+      const end = taRef.current?.selectionStart ?? draft.length;
+      const next = draft.slice(0, p.tokenStart) + draft.slice(end);
+      setDraft(next);
+      // caret lands right where the token was removed
+      window.setTimeout(() => taRef.current?.setSelectionRange(p.tokenStart, p.tokenStart), 0);
+      return undefined;
+    });
+    setFileAtt((xs) => (xs.some((x) => x.path === f.path) ? xs : [...xs, f]));
   };
 
   const onSendDraft = () => {
     const text = draft.trim();
-    if (!text) return;
-    send([{ type: "text", text }]);
+    if (!text && fileAtt.length === 0) return;
+    const marker = fileAtt.length > 0 ? `\n\n📎 引用：${fileAtt.map((a) => a.rel).join("、")}` : "";
+    const parts: PromptPart[] = [];
+    if (text) parts.push({ type: "text", text: text + marker });
+    for (const a of fileAtt) parts.push({ type: "file", path: a.path, rel: a.rel });
+    send(parts);
   };
 
   const onPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -391,16 +443,78 @@ export function App() {
 
       {/* composer */}
       <div className="composer">
+        {/* @ file completion popup */}
+        {filePopup && (
+          <div className="file-popup">
+            {filePopup.items.length === 0 && <div className="file-item muted">搜索中…</div>}
+            {filePopup.items.map((f, i) => (
+              <div
+                key={f.path}
+                className={`file-item ${i === filePopup.sel ? "is-sel" : ""}`}
+                onMouseEnter={() => setFilePopup((p) => (p ? { ...p, sel: i } : p))}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep textarea focus
+                  pickFile(f);
+                }}
+              >
+                <span className="file-rel">{f.rel}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* attachment chips */}
+        {fileAtt.length > 0 && (
+          <div className="attach-chips">
+            {fileAtt.map((a) => (
+              <span key={a.path} className="attach-chip" title={a.path}>
+                📎 {a.rel}
+                <button
+                  className="icon-btn mini"
+                  title="移除"
+                  onClick={() => setFileAtt((xs) => xs.filter((x) => x.path !== a.path))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="composer-row composer-input-wrap">
           <textarea
+            ref={taRef}
             value={draft}
-            placeholder={busy ? "运行中，Enter 排队追加…" : "输入消息，Enter 发送，Shift+Enter 换行；可粘贴图片"}
-            onChange={(e) => setDraft(e.target.value)}
+            placeholder={busy ? "运行中，Enter 排队追加…" : "输入消息，Enter 发送，Shift+Enter 换行；@ 引用文件；可粘贴图片"}
+            onChange={(e) => onDraftChange(e.target.value, e.target.selectionStart ?? 0)}
             onKeyDown={(e) => {
+              if (filePopup && filePopup.items.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setFilePopup((p) => (p ? { ...p, sel: (p.sel + 1) % p.items.length } : p));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setFilePopup((p) => (p ? { ...p, sel: (p.sel - 1 + p.items.length) % p.items.length } : p));
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  pickFile(filePopup.items[filePopup.sel]);
+                  return;
+                }
+              }
+              if (e.key === "Escape" && filePopup) {
+                setFilePopup(undefined);
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 onSendDraft();
               }
+            }}
+            onBlur={() => {
+              // delay so mousedown-pick still fires before the popup unmounts
+              window.setTimeout(() => setFilePopup(undefined), 150);
             }}
             onPaste={(e) => void onPaste(e)}
             rows={3}
@@ -409,7 +523,7 @@ export function App() {
             className="send-fab"
             title="发送（Enter）"
             aria-label="发送"
-            disabled={!draft.trim()}
+            disabled={!draft.trim() && fileAtt.length === 0}
             onClick={onSendDraft}
           >
             ➤

@@ -390,7 +390,7 @@ export class SessionManager {
       await this.lifecycle.client.call("session.prompt", {
         sessionId,
         mode,
-        content: parts,
+        content: await expandFileParts(parts),
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
       });
     } catch (err) {
@@ -637,4 +637,31 @@ function errText(err: unknown): string {
     return `${(err as any).code}: ${(err as any).message}`;
   }
   return String(err);
+}
+
+// ---- @ file attachment expansion (webview cannot read the filesystem) ----
+
+const FILE_PART_MAX_CHARS = 20_000;
+
+async function expandFileParts(parts: unknown[]): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const p of parts) {
+    if (!p || typeof p !== "object" || (p as any).type !== "file") {
+      out.push(p);
+      continue;
+    }
+    const path = String((p as any).path ?? "");
+    const rel = String((p as any).rel ?? path);
+    try {
+      const { readFile } = await import("node:fs/promises");
+      let text = await readFile(path, "utf8");
+      if (text.length > FILE_PART_MAX_CHARS) {
+        text = `${text.slice(0, FILE_PART_MAX_CHARS)}\n…（已截断至 ${FILE_PART_MAX_CHARS} 字符）`;
+      }
+      out.push({ type: "text", text: `[引用文件 ${rel}]\n${text}` });
+    } catch (err) {
+      out.push({ type: "text", text: `[引用文件 ${rel} 读取失败：${errText(err)}]` });
+    }
+  }
+  return out;
 }
