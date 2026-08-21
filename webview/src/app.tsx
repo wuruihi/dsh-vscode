@@ -723,11 +723,13 @@ function EffortPicker({ models, onSelect }: { models?: ModelsData; onSelect: (ef
   const cur = models?.current;
   const efforts = useMemo(() => {
     if (!cur) return [];
-    for (const g of models?.groups ?? []) {
-      const hit = g.models.find((x) => x.id === cur.model);
-      if (hit?.reasoning) return hit.reasoning.efforts;
-    }
-    return [];
+    // Match by provider FIRST: the same model id may exist in several
+    // providers — a same-id model elsewhere may support reasoning (with
+    // different efforts) while the current one does not, and picking from
+    // that stale list makes the server reject the switch.
+    const own = (models?.groups ?? []).find((g) => g.id === cur.provider);
+    const hit = own?.models.find((x) => x.id === cur.model);
+    return hit?.reasoning?.efforts ?? [];
   }, [cur, models]);
   if (efforts.length === 0) return null;
   return (
