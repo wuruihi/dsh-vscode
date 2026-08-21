@@ -412,12 +412,15 @@ export class SessionManager {
   }
 
   /** Slash-menu entries: skills (insert `/name ` text — the host pre-step
-   *  gesture injects content) + built-in commands (dispatch via RPC). */
+   *  gesture injects content) + built-in commands (dispatch via RPC).
+   *  Wire reality (live-probed): skills ride the apiproxy endpoint
+   *  "skill.list" (singular) {sessionId}; commands ride the typert gateway
+   *  "commands/list" with {args:{agentId}} through the same /api carrier. */
   async listSlash(sessionId: string): Promise<{ kind: "skill" | "command"; name: string; description: string }[]> {
     const out: { kind: "skill" | "command"; name: string; description: string }[] = [];
     const [skills, commands] = await Promise.allSettled([
-      this.lifecycle.client.call("skills.list", { sessionId }),
-      this.lifecycle.client.call("commands.list", { sessionId }),
+      this.lifecycle.client.call("skill.list", { sessionId }),
+      this.lifecycle.client.call("commands/list", { args: { agentId: sessionId } }),
     ]);
     if (skills.status === "fulfilled") {
       const list = (skills.value as { skills?: unknown[] })?.skills ?? (Array.isArray(skills.value) ? skills.value : []);
@@ -430,7 +433,8 @@ export class SessionManager {
     if (commands.status === "fulfilled") {
       const list = Array.isArray(commands.value) ? commands.value : [];
       for (const c of list as Record<string, unknown>[]) {
-        if (typeof c?.name === "string") {
+        // skills and commands share the `/name` grammar: a same-named skill wins
+        if (typeof c?.name === "string" && !out.some((o) => o.name === c.name)) {
           out.push({ kind: "command", name: c.name, description: String(c.description ?? "") });
         }
       }
@@ -443,7 +447,7 @@ export class SessionManager {
 
   async runCommand(sessionId: string, line: string): Promise<void> {
     try {
-      await this.lifecycle.client.call("commands.execute", { sessionId, line });
+      await this.lifecycle.client.call("commands/execute", { args: { agentId: sessionId, line } });
     } catch (err) {
       this.host.post({ t: "notify", kind: "warn", message: `命令执行失败：${errText(err)}` });
     }

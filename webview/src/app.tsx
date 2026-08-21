@@ -552,7 +552,15 @@ export function App() {
         {/* slash menu (skills + commands) */}
         {slashPopup && (
           <div className="file-popup">
-            {slashPopup.items.length === 0 && <div className="file-item muted">{slashPopup.query ? "无匹配" : "加载中…"}</div>}
+            {slashPopup.items.length === 0 && (
+              <div className="file-item muted">
+                {slashPopup.query
+                  ? "无匹配"
+                  : slashCacheRef.current
+                    ? "暂无可用技能"
+                    : "加载中…"}
+              </div>
+            )}
             {slashPopup.items.map((it, i) => (
               <div
                 key={`${it.kind}:${it.name}`}
