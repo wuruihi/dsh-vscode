@@ -254,9 +254,8 @@ export function App() {
   const onSendDraft = () => {
     const text = draft.trim();
     if (!text && fileAtt.length === 0) return;
-    const marker = fileAtt.length > 0 ? `\n\n📎 引用：${fileAtt.map((a) => a.rel).join("、")}` : "";
     const parts: PromptPart[] = [];
-    if (text) parts.push({ type: "text", text: text + marker });
+    if (text) parts.push({ type: "text", text });
     for (const a of fileAtt) parts.push({ type: "file", path: a.path, rel: a.rel });
     send(parts);
   };
@@ -579,7 +578,14 @@ function ItemView({ item }: { item: FoldItem }) {
   if (item.kind === "user") {
     return (
       <div className="msg user">
-        <div className="bubble user-bubble">{stripSystemContext(item.text)}</div>
+        {item.text ? <div className="bubble user-bubble">{item.text}</div> : null}
+        {item.files && item.files.length > 0 && (
+          <div className="msg-files">
+            {item.files.map((f) => (
+              <span key={f} className="attach-chip" title={f}>📎 {f}</span>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

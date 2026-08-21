@@ -475,6 +475,7 @@ body {
   border: 1px solid var(--vscode-inputValidation-infoBorder, rgba(70,130,220,.4));
   max-width: 100%;
 }
+.msg-files { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 12% 0 0; justify-content: flex-end; }
 .composer-meta {
   margin-top: 4px; font-size: 10.5px; color: var(--vscode-descriptionForeground);
   text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

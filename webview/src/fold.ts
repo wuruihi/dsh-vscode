@@ -36,6 +36,9 @@ export interface UserItem {
   kind: "user";
   key: string;
   text: string;
+  /** attachment labels (file names) carried by this message — rendered as
+   *  chips, never as inline content. */
+  files?: string[];
 }
 
 export interface InfoItem {
@@ -94,8 +97,12 @@ export class ConversationFold {
         // Injections arrive as their OWN user/message events (runtime-context
         // snapshots, policy-change notices) — drop them whole; mixed messages
         // keep their human text after paragraph-level stripping.
-        const text = stripSystemContext(extractUserText(ev.data));
-        if (text) this.items.push({ kind: "user", key: `u${this.lastSeq}-${this.items.length}`, text });
+        // File-attachment content parts arrive as separate text blocks shaped
+        // "[引用文件 X]\n<content>" — extract the label, drop the content.
+        const { text, files } = extractUserPayload(ev.data);
+        if (text || files.length > 0) {
+          this.items.push({ kind: "user", key: `u${this.lastSeq}-${this.items.length}`, text, ...(files.length > 0 ? { files } : {}) });
+        }
         break;
       }
       case "turn/start": {
@@ -369,21 +376,28 @@ function parseJson(raw: unknown): unknown {
   }
 }
 
-function extractUserText(data: unknown): string {
+/** Extract (human text, attachment labels) from a user/message payload.
+ *  Attachment parts are text blocks starting with "[引用文件 X]"; their
+ *  content is dropped here — the bubble shows chips, never file content. */
+function extractUserPayload(data: unknown): { text: string; files: string[] } {
   const d = (data ?? {}) as any;
-  if (typeof d.text === "string") return d.text;
-  if (Array.isArray(d.content)) {
-    // Join text blocks with a BLANK line: injected paragraphs (runtime
-    // context / policy notices) arrive as separate blocks and the stripper
-    // segments on \n\n — without the separator they merge into one paragraph
-    // headed by the user's own text and survive the filter.
-    return d.content
-      .map((c: any) => (c && typeof c.text === "string" ? c.text : ""))
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  if (typeof d.content === "string") return d.content;
-  return "";
+  const parts: string[] = [];
+  const files: string[] = [];
+  const consider = (t: string): void => {
+    const m = /^\[引用文件 (.+?)\]\n?/.exec(t.trim());
+    if (m) {
+      files.push(m[1]);
+      return;
+    }
+    parts.push(t);
+  };
+  if (typeof d.text === "string") consider(d.text);
+  else if (Array.isArray(d.content)) {
+    for (const c of d.content) {
+      if (c && typeof c.text === "string" && c.text) consider(c.text);
+    }
+  } else if (typeof d.content === "string") consider(d.content);
+  return { text: stripSystemContext(parts.join("\n\n")), files };
 }
 
 // ---- stripSystemContext (paragraph-level, Obsidian-proven core + VSCode extras) ----
