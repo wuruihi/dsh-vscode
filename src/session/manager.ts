@@ -212,7 +212,9 @@ export class SessionManager {
 
   private visibleItems(): SessionItem[] {
     return this.sessionRows
-      .filter((r) => !r.blank || r.sessionId === this.currentSession) // blank hidden, except the active one (preset picker needs its state)
+      // Workspace-bound list: only this project's sessions (cwd match); the
+      // active session stays visible even on a cwd edge (adopt/fork races).
+      .filter((r) => r.sessionId === this.currentSession || (!r.blank && sameDir(r.cwd)))
       .map((r) => ({
         sessionId: r.sessionId,
         title: titleOf(r) ?? this.titleCache.get(r.sessionId),

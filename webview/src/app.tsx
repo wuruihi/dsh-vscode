@@ -150,6 +150,11 @@ export function App() {
           setQueue(m.items);
           break;
         case "projection":
+          // Session-scoped UI state must never leak across sessions: pushes
+          // arrive for EVERY session (background runs included) — a foreign
+          // todo list / plan banner / token readout overwriting this panel
+          // was a real cross-session contamination bug.
+          if (m.sessionId !== current) break;
           if (m.key === "tokenUsage" || m.key === "liveTokenUsage") {
             const v = (m.value ?? {}) as Record<string, number>;
             const parts: string[] = [];

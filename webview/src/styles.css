@@ -442,7 +442,7 @@ body {
 /* composer */
 .composer { border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,.25)); padding: 6px 8px 8px; }
 .composer-row textarea {
-  width: 100%; resize: vertical; min-height: 44px; max-height: 180px;
+  width: 100%; resize: vertical; min-height: 64px; max-height: 45vh;
   padding: 6px 8px; font-family: inherit; font-size: inherit;
   background: var(--vscode-input-background); color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, transparent); border-radius: 6px;
