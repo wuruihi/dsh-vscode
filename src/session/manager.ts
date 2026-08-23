@@ -55,6 +55,9 @@ export class SessionManager {
     private readonly lifecycle: DshLifecycle,
     private readonly host: ManagerHost,
     private readonly memento?: vscode.Memento,
+    /** Per-workspace memento: scopes the "last used model" default to THIS
+     *  project, so cross-project global-last leakage never lands here. */
+    private readonly wsMemento?: vscode.Memento,
   ) {
     this.loadPersistedTitles();
     const ev = lifecycle.events;
@@ -192,6 +195,7 @@ export class SessionManager {
         });
         sessionId = created.sessionId;
       }
+      await this.applyWsDefaultModel(sessionId);
       await this.adoptSession(sessionId);
     } catch (err) {
       this.host.post({ t: "notify", kind: "error", message: `新建会话失败：${String(err)}` });
@@ -301,8 +305,40 @@ export class SessionManager {
     try {
       const data = await this.lifecycle.client.call<ModelsData>("session.models", { sessionId });
       this.host.post({ t: "models", sessionId, data });
+      // Workspace-scoped model memory: record what a REAL (non-blank) session
+      // of this project runs, so new chats default within the project.
+      const row = this.sessionRows.find((r) => r.sessionId === sessionId);
+      if (data?.current?.model && row && !row.blank && row.cwd && sameDir(row.cwd)) {
+        this.rememberWsModel(data.current);
+      }
     } catch (err) {
       warn(`[manager] models failed: ${String(err)}`);
+    }
+  }
+
+  /** ---- workspace-scoped default model ----
+   *  Host default for a new session is the GLOBAL last-used model — projects
+   *  running in parallel cross-contaminate (A's chats flip to B's model).
+   *  Remember the last model used inside THIS workspace and apply it on
+   *  every new chat here; host default only on first-ever use. */
+  private rememberWsModel(cur: { provider: string; model: string; reasoningEffort?: string }): void {
+    void this.wsMemento?.update("dsh.lastModel", cur);
+  }
+
+  private async applyWsDefaultModel(sessionId: string): Promise<void> {
+    const cur = this.wsMemento?.get<{ provider: string; model: string; reasoningEffort?: string }>("dsh.lastModel");
+    if (!cur?.provider || !cur.model) return;
+    try {
+      await this.lifecycle.client.call("session.selectModel", {
+        sessionId,
+        provider: cur.provider,
+        model: cur.model,
+        ...(cur.reasoningEffort ? { reasoningEffort: cur.reasoningEffort } : {}),
+      });
+    } catch (err) {
+      // Stale memory (model/provider since removed): drop it, host default rules.
+      warn(`[manager] ws default model apply failed (${String(err)}) — clearing memory`);
+      void this.wsMemento?.update("dsh.lastModel", undefined);
     }
   }
 
@@ -472,6 +508,7 @@ export class SessionManager {
         model,
         ...(reasoningEffort ? { reasoningEffort } : {}),
       });
+      this.rememberWsModel({ provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) });
       await this.refreshModels(sessionId);
       this.host.post({ t: "notify", kind: "info", message: `模型已切换：${model}` });
     } catch (err) {

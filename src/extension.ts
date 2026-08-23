@@ -14,7 +14,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const lifecycle = new DshLifecycle(baseUrl);
   const panel = new DshChatView(context);
-  const manager = new SessionManager(lifecycle, { post: (m) => panel.post(m) }, context.globalState);
+  const manager = new SessionManager(lifecycle, { post: (m) => panel.post(m) }, context.globalState, context.workspaceState);
   const diff = new DiffService();
   manager.bindDiff(diff);
   const ideBridge = new IdeBridge();
