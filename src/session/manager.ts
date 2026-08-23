@@ -576,8 +576,25 @@ export class SessionManager {
     if (type === "session/subscribed") return; // baseline bookkeeping only
     if (type === "session/projection") {
       const sid = payload.sessionId;
-      this.host.post({ t: "projection", sessionId: sid, key: payload.key, value: payload.value });
-      if (payload.key === "title" && typeof payload.value === "string") {
+      // Panel state (todos/plan/tokens/permissions) is current-session only.
+      // Title is the one cross-session projection we keep: it feeds the
+      // session-list cache for THIS workspace's rows.
+      if (payload.key !== "title") {
+        if (sid !== this.currentSession) return;
+        this.host.post({ t: "projection", sessionId: sid, key: payload.key, value: payload.value });
+        if (payload.key === "permissions") {
+          const perm = payload.value;
+          const value = typeof perm?.currentValue === "string" ? perm.currentValue : null;
+          const opts = Array.isArray(perm?.options)
+            ? perm.options
+                .map((o: any) => ({ id: String(o?.value ?? ""), label: String(o?.name ?? o?.value ?? "") }))
+                .filter((o: { id: string }) => o.id)
+            : [];
+          if (value || opts.length > 0) this.host.post({ t: "permission", data: { value, revision: null, presets: opts } });
+        }
+        return;
+      }
+      if (typeof payload.value === "string") {
         this.titleCache.set(sid, payload.value);
         const row = this.sessionRows.find((r) => r.sessionId === sid);
         if (row) {
@@ -587,16 +604,6 @@ export class SessionManager {
           this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
         }
       }
-      if (payload.key === "permissions" && payload.sessionId === this.currentSession) {
-        const perm = payload.value;
-        const value = typeof perm?.currentValue === "string" ? perm.currentValue : null;
-        const opts = Array.isArray(perm?.options)
-          ? perm.options
-              .map((o: any) => ({ id: String(o?.value ?? ""), label: String(o?.name ?? o?.value ?? "") }))
-              .filter((o: { id: string }) => o.id)
-          : [];
-        if (value || opts.length > 0) this.host.post({ t: "permission", data: { value, revision: null, presets: opts } });
-      }
       return;
     }
     if (type === "session/queue") {
@@ -604,6 +611,11 @@ export class SessionManager {
       return;
     }
     if (type === "approval/requested") {
+      // Workspace gate: the host broadcasts approvals from EVERY session to
+      // EVERY client — a foreign project's approval card must never surface
+      // in this window. Dropped copies are not lost: the owning client (and
+      // the GUI, which shows all workspaces) still renders them.
+      if (!this.ownsSession(payload.sessionId)) return;
       const card: ApprovalCard = {
         sessionId: payload.sessionId,
         approvalId: payload.approvalId,
@@ -620,6 +632,8 @@ export class SessionManager {
       return;
     }
     if (type === "question/requested") {
+      // Same workspace gate as approvals — questions pop where they belong.
+      if (!this.ownsSession(payload.sessionId)) return;
       // Pending questions replay on reconnect with stable rpcId — dedupe.
       if (this.seenQuestions.has(rpcId)) return;
       this.seenQuestions.add(rpcId);
@@ -643,6 +657,22 @@ export class SessionManager {
       this.host.post({ t: "notify", kind: "error", message: `DSH 流错误：${detail}` });
       return;
     }
+  }
+
+  /** Session-ownership gate — the ONE place that decides whether a broadcast
+   *  event belongs to this window. The host has no per-workspace
+   *  subscriptions: every client receives every session's events, so scoping
+   *  is the client's contract. A session is ours when it is the current one
+   *  (created/adopted in this workspace) or its row's cwd matches the
+   *  workspace root. Unknown rows are NOT ours: a foreign client's
+   *  just-created session (not yet in our refreshed list) must never
+   *  surface here; our own fresh sessions are current before they can
+   *  produce events. */
+  private ownsSession(sid: string | undefined): boolean {
+    if (!sid) return false;
+    if (sid === this.currentSession) return true;
+    const row = this.sessionRows.find((r) => r.sessionId === sid);
+    return !!row && !row.blank && !!row.cwd && sameDir(row.cwd);
   }
 
   private markRunning(sid: string, running: boolean): void {
