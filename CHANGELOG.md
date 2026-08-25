@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.5.5 — 复合坏形修复：数组内裸键值对 + 提前闭 root 叠加
+
+- **badcase 5**：模型把 items 第二个元素的开头 `{` 丢了——callout 完整结束后，`"type":"table","columns":…,"rows":…` 键值对裸飘在数组里（数组成员不能是键值对，非法 JSON）；且该载荷结尾 `]]}` 少了 items 的闭合 `]`——与 badcase 1"提前闭 root"叠加成复合坏形
+- **新修复级 `wrapBareMembers`**：字符串感知栈扫描，检测"元素位置的 `"key":` 对"（无歧义形态：合法 JSON 中数组元素绝不可能以键值对开头），补 `{` 包壳、在数组 `]` 或下一元素前补 `}`；扫描器看不懂的形态返回 null 降级，不猜
+- **级联编排**：balanceClose 补完缺 `]` 后对再平衡文本重跑 wrap——两个修复级可组合，覆盖复合坏形
+- **回归套件** `scripts/repair-regress.cjs`（6 用例，含本 badcase 原文逐字），与切分层套件 `fence-regress.cjs` 并列；JSON 修复层从此有独立回归门
+
 ## v0.5.4 — 修复插件应答提问/审批不生效
 
 - **现象**：插件里回复提问，提示"已在其他端处理"，但 GUI 里问题仍待答，必须去 GUI 答才生效

@@ -182,6 +182,140 @@ function cheapRepairs(s: string): string {
   return s.replace(/[\u201c\u201d]/g, '"').replace(/[\u2018\u2019]/g, "'").replace(/,\s*([}\]])/g, "$1");
 }
 
+/** Wrap bare key/value pairs that leaked INTO an array — the model dropped an
+ *  element's opening `{`: `[{callout},"type":"table","rows":[…]]`. In valid
+ *  JSON an array element is never a `"key": value` pair, so a string followed
+ *  by `:` at element position is unambiguous: open a pseudo-object there and
+ *  close it before the next element or the array's `]`. String-aware stack
+ *  scan; null = scanner confused or nothing fixed (degrade, never guess). */
+function wrapBareMembers(s: string): string | null {
+  type Ctx = "a" | "o" | "p"; // array / object / pseudo-object (we opened it)
+  type Expect = "elem" | "value" | "key" | "sep";
+  let out = "";
+  let i = 0;
+  let fixed = 0;
+  const stack: Ctx[] = [];
+  let expect: Expect = "elem";
+  const top = (): Ctx | undefined => stack[stack.length - 1];
+  const readString = (from: number): [string, number] => {
+    let j = from + 1;
+    while (j < s.length) {
+      if (s[j] === "\\") j += 2;
+      else if (s[j] === '"') break;
+      else j++;
+    }
+    return [s.slice(from, j + 1), j + 1];
+  };
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) {
+      out += s[i];
+      i++;
+    }
+    if (i >= s.length) break;
+    const ch = s[i];
+    if (ch === '"') {
+      const [tok, after] = readString(i);
+      let k = after;
+      while (k < s.length && /\s/.test(s[k])) k++;
+      const isKey = k < s.length && s[k] === ":";
+      if (expect === "elem" && isKey) {
+        // the unambiguous malformed shape: element-position pair
+        out += `{${tok}:`;
+        stack.push("p");
+        fixed++;
+        expect = "value";
+        i = k + 1;
+        continue;
+      }
+      if (!isKey && (expect === "elem" || expect === "value")) {
+        out += tok; // bare string as element/value — legal
+        i = after;
+        expect = "sep";
+        continue;
+      }
+      if (expect === "key" && isKey) {
+        out += `${tok}:`;
+        expect = "value";
+        i = k + 1;
+        continue;
+      }
+      return null; // e.g. a pair where a value was expected — not our shape
+    }
+    if (ch === "{" || ch === "[") {
+      if (expect === "key") return null; // `{` after `,` inside an object — not our shape
+      stack.push(ch === "{" ? "o" : "a");
+      out += ch;
+      i++;
+      expect = ch === "{" ? "key" : "elem";
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      if (top() === "p") {
+        // the closer cannot belong to the pseudo — close it, reprocess closer
+        out += "}";
+        stack.pop();
+        continue;
+      }
+      const want: Ctx = ch === "}" ? "o" : "a";
+      if (top() === want) {
+        stack.pop();
+        out += ch;
+        i++;
+        expect = "sep";
+        continue;
+      }
+      if (stack.length === 0 && expect === "sep") {
+        out += ch; // stray trailing closers: pass through verbatim
+        i++;
+        continue;
+      }
+      return null; // mismatched nesting — balanceClose's business, not ours
+    }
+    if (ch === ",") {
+      if (top() === "p") {
+        let k = i + 1;
+        while (k < s.length && /\s/.test(s[k])) k++;
+        if (k < s.length && s[k] === '"') {
+          const [, after] = readString(k);
+          let m = after;
+          while (m < s.length && /\s/.test(s[m])) m++;
+          if (m < s.length && s[m] === ":") {
+            out += ","; // pair run continues
+            expect = "key";
+            i = k;
+            continue;
+          }
+        }
+        out += "}"; // pair run ended: close pseudo, comma separates elements
+        stack.pop();
+        out += ",";
+        expect = "elem";
+        i++;
+        continue;
+      }
+      out += ",";
+      expect = top() === "a" ? "elem" : "key";
+      i++;
+      continue;
+    }
+    if (expect === "value" || expect === "elem") {
+      let j = i;
+      while (j < s.length && !",]}".includes(s[j])) j++;
+      out += s.slice(i, j);
+      i = j;
+      expect = "sep";
+      continue;
+    }
+    return null; // unexpected token in this state
+  }
+  if (top() === "p") {
+    out += "}"; // input ended mid-pair-run (streaming tail)
+    stack.pop();
+  }
+  if (stack.length > 0) return null; // unbalanced: leave to balanceClose
+  return fixed > 0 ? out : null;
+}
+
 function parseSpec(raw: string): Node | null {
   try {
     const v = JSON.parse(raw);
@@ -196,6 +330,16 @@ function parseSpec(raw: string): Node | null {
   } catch {
     /* fallthrough */
   }
+  // bare key/value pairs inside an array (element lost its `{`)
+  const wrapped = wrapBareMembers(cheap);
+  if (wrapped) {
+    try {
+      const v = JSON.parse(wrapped);
+      if (v && typeof v === "object") return v;
+    } catch {
+      /* fallthrough */
+    }
+  }
   // truncation tails: the fence settled while containers were still open
   const closed = balanceClose(cheap);
   if (closed) {
@@ -204,6 +348,17 @@ function parseSpec(raw: string): Node | null {
       if (v && typeof v === "object") return v;
     } catch {
       /* fallthrough */
+    }
+    // compound malformation: an early root close (fixed above) hiding bare
+    // pairs inside the re-balanced text — re-wrap and retry
+    const wrapped2 = wrapBareMembers(closed);
+    if (wrapped2) {
+      try {
+        const v = JSON.parse(wrapped2);
+        if (v && typeof v === "object") return v;
+      } catch {
+        /* fallthrough */
+      }
     }
   }
   const fixed = repairSpec(cheap);
