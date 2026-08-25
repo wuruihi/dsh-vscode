@@ -316,6 +316,67 @@ function wrapBareMembers(s: string): string | null {
   return fixed > 0 ? out : null;
 }
 
+/** Escape unescaped quotes inside string values — ported from the host GUI's
+ *  own scanner heuristic (genui xn): a closing `"` followed by whitespace +
+ *  one of , ] } : or end-of-input is a REAL terminator; anything else means
+ *  the model dropped a bare quote inside the text (「说"你好"啊」) — escape
+ *  it. Also drops trailing commas before } ] (same pass). Null = nothing
+ *  fixed or still unparseable. */
+function escapeInnerQuotes(s: string): string | null {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  let fixes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) {
+      out += ch;
+      esc = false;
+      continue;
+    }
+    if (inStr && ch === "\\") {
+      out += ch;
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      if (!inStr) {
+        inStr = true;
+        out += ch;
+        continue;
+      }
+      let k = i + 1;
+      while (k < s.length && /[\s\r]/.test(s[k])) k++;
+      const next = k < s.length ? s[k] : "";
+      if (next === "," || next === "]" || next === "}" || next === ":" || next === "") {
+        inStr = false;
+        out += ch;
+      } else {
+        out += '\\"';
+        fixes++;
+      }
+      continue;
+    }
+    if (ch === ",") {
+      let k = i + 1;
+      while (k < s.length && /[\s\r]/.test(s[k])) k++;
+      const next = k < s.length ? s[k] : "";
+      if (next === "}" || next === "]" || next === "") {
+        fixes++; // trailing comma — drop
+        continue;
+      }
+    }
+    out += ch;
+  }
+  if (fixes === 0) return null;
+  try {
+    JSON.parse(out);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 function parseSpec(raw: string): Node | null {
   try {
     const v = JSON.parse(raw);
@@ -329,6 +390,16 @@ function parseSpec(raw: string): Node | null {
     return v && typeof v === "object" ? v : null;
   } catch {
     /* fallthrough */
+  }
+  // unescaped quotes inside strings (host GUI's xn heuristic)
+  const quoted = escapeInnerQuotes(cheap);
+  if (quoted) {
+    try {
+      const v = JSON.parse(quoted);
+      if (v && typeof v === "object") return v;
+    } catch {
+      /* fallthrough */
+    }
   }
   // bare key/value pairs inside an array (element lost its `{`)
   const wrapped = wrapBareMembers(cheap);

@@ -18,6 +18,8 @@ const cases = [
   ["bare component seq (historical)", `{"type": "button", "label": "A"}\n{"type": "button", "label": "B"}`, (v) => v.items.length === 2],
   ["early root close, items dangling (historical)", `{"items": [{"type": "text", "content": "x"}}`, (v) => v.items.length === 1],
   ["trailing prose (historical)", `{"items": [{"type": "text", "content": "x"}]}\n\n正文说明`, (v) => v.items.length === 1],
+  ["unescaped inner quotes (host GUI xn parity)", `{"items": [{"type": "text", "content": "他说"你好"然后走了"}]}`, (v) => v.items[0].content === `他说"你好"然后走了`],
+  ["trailing comma (host GUI xn parity)", `{"items": [{"type": "text", "content": "a"},],}`, (v) => v.items.length === 1],
 ];
 
 let pass = 0;
