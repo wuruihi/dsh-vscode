@@ -61,14 +61,18 @@ export class RpcClient {
     throw new DshRpcError(e?.code ?? "internal", e?.message ?? `RPC ${method} failed`, e?.details);
   }
 
-  /** Answer a pending approval/question. Returns the carrier receipt, never throws for business outcomes. */
+  /** Answer a pending approval/question. Returns the carrier receipt, never throws for business outcomes.
+   *  Wire fact (probed): /api/respond replies with the BARE carrier receipt
+   *  {"accepted":true} | {"accepted":false,"reason":"not-pending"|"bad-response"}
+   *  — no server-response envelope wrapper (unlike /api/<method>). */
   async respond(rpcId: string, value: unknown, timeoutMs = 30_000): Promise<RespondReceipt> {
     const envelope = { type: "client-response", rpcId, result: { ok: true, value } };
     try {
       const body = await this.post("/api/respond", envelope, timeoutMs);
-      const r = body?.result?.value;
-      if (r && typeof r === "object" && "accepted" in r) {
-        return r as RespondReceipt;
+      if (body && typeof body === "object" && "accepted" in body) {
+        return body.accepted === true
+          ? { accepted: true }
+          : { accepted: false, reason: body.reason === "not-pending" ? "not-pending" : "bad-response" };
       }
       return { accepted: false, reason: "bad-response" };
     } catch (err) {

@@ -41,6 +41,12 @@ export class SessionManager {
   private batch: { sessionId: string; frames: unknown[] } | undefined;
   private batchTimer: NodeJS.Timeout | undefined;
   private seenQuestions = new Set<string>();
+  /** Generation-scoped approval cards: rpcId -> approvalId. */
+  private seenApprovals = new Map<string, string>();
+  /** question signature -> live rpcId: a replayed pending question arrives
+   *  with a FRESH rpcId each reconnect; the signature swap retires the stale
+   *  card so the user can only ever answer the live one. */
+  private questionSig = new Map<string, string>();
   private diff: DiffService | undefined;
   private titleCache = new Map<string, string>();
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -72,6 +78,11 @@ export class SessionManager {
 
   /** Called on every (re)connect: resolve workspace, load sessions, pick or create one. */
   private async onConnected(): Promise<void> {
+    // Generation boundary: the host's pending table re-mints rpcIds on every
+    // mux replay, so last generation's question/approval cards are stale —
+    // answering them lands not-pending. Withdraw them all; the replay that
+    // follows this socket open re-adds the live ones.
+    this.dropGenerationCards();
     try {
       this.workspaceId = await resolveWorkspace(this.lifecycle.client);
       if (!this.workspaceId) {
@@ -525,19 +536,46 @@ export class SessionManager {
     }
   }
 
+  /** Withdraw every pending question/approval card from the webview and
+   *  reset the generation-scoped bookkeeping. Called at each socket
+   *  generation boundary — replays will re-add whatever is still live. */
+  private dropGenerationCards(): void {
+    for (const rpcId of this.seenQuestions) this.host.post({ t: "question-gone", rpcId });
+    for (const approvalId of this.seenApprovals.values()) {
+      if (approvalId) this.host.post({ t: "approval-gone", approvalId });
+    }
+    this.seenQuestions.clear();
+    this.seenApprovals.clear();
+    this.questionSig.clear();
+  }
+
   async respondApproval(rpcId: string, sessionId: string, approvalId: string, outcome: "allowed-once" | "rejected"): Promise<void> {
     const receipt = await this.lifecycle.client.respond(rpcId, { sessionId, approvalId, outcome });
     if (!receipt.accepted) {
-      // not-pending: another client (GUI/second window) already answered — the
-      // resolved event will withdraw our card; just inform.
-      this.host.post({ t: "notify", kind: "info", message: "该审批已在其他端处理" });
+      // not-pending: this card's rpcId went stale across a reconnect — the
+      // live replay has minted (or will mint) a fresh card. Withdraw ours so
+      // the user cannot keep clicking a dead card; answer on the live one.
+      this.seenApprovals.delete(rpcId);
+      if (receipt.reason === "not-pending") this.host.post({ t: "approval-gone", approvalId });
+      this.host.post({
+        t: "notify",
+        kind: "warn",
+        message: receipt.reason === "not-pending" ? "该审批卡已过期（连接重连过），请在新刷新的卡片上操作" : "审批应答被拒绝，请重试",
+      });
     }
   }
 
   async respondQuestion(rpcId: string, sessionId: string, answers: { id: string; selected: string[]; custom?: string }[]): Promise<void> {
     const receipt = await this.lifecycle.client.respond(rpcId, { sessionId, answer: { answers } });
     if (!receipt.accepted) {
-      this.host.post({ t: "notify", kind: "info", message: "该提问已在其他端处理" });
+      this.seenQuestions.delete(rpcId);
+      for (const [sig, id] of this.questionSig) if (id === rpcId) this.questionSig.delete(sig);
+      if (receipt.reason === "not-pending") this.host.post({ t: "question-gone", rpcId });
+      this.host.post({
+        t: "notify",
+        kind: "warn",
+        message: receipt.reason === "not-pending" ? "该提问卡已过期（连接重连过），请在新刷新的卡片上作答" : "应答被拒绝，请重试",
+      });
     }
   }
 
@@ -616,6 +654,7 @@ export class SessionManager {
       // in this window. Dropped copies are not lost: the owning client (and
       // the GUI, which shows all workspaces) still renders them.
       if (!this.ownsSession(payload.sessionId)) return;
+      this.seenApprovals.set(rpcId, String(payload.approvalId ?? ""));
       const card: ApprovalCard = {
         sessionId: payload.sessionId,
         approvalId: payload.approvalId,
@@ -634,16 +673,27 @@ export class SessionManager {
     if (type === "question/requested") {
       // Same workspace gate as approvals — questions pop where they belong.
       if (!this.ownsSession(payload.sessionId)) return;
-      // Pending questions replay on reconnect with stable rpcId — dedupe.
+      // Pending questions replay with a LIVE rpcId per generation; within a
+      // generation the rpcId is stable. Signature swap retires the stale
+      // duplicate so exactly one live card stays answerable.
       if (this.seenQuestions.has(rpcId)) return;
+      const sig = `${payload.sessionId}|${(payload.questions ?? []).map((q: any) => String(q?.id ?? "")).join(",")}`;
+      const prevRpcId = this.questionSig.get(sig);
+      if (prevRpcId && prevRpcId !== rpcId) {
+        this.host.post({ t: "question-gone", rpcId: prevRpcId });
+        this.seenQuestions.delete(prevRpcId);
+      }
+      this.questionSig.set(sig, rpcId);
       this.seenQuestions.add(rpcId);
       const card: QuestionCard = { sessionId: payload.sessionId, rpcId, questions: payload.questions ?? [] };
       this.host.post({ t: "question", card });
       return;
     }
     if (type === "question/resolved") {
-      this.seenQuestions.delete(payload.questionRpcId ?? rpcId);
-      this.host.post({ t: "question-gone", rpcId: payload.questionRpcId ?? rpcId });
+      const gone = payload.questionRpcId ?? rpcId;
+      this.seenQuestions.delete(gone);
+      for (const [sig, id] of this.questionSig) if (id === gone) this.questionSig.delete(sig);
+      this.host.post({ t: "question-gone", rpcId: gone });
       return;
     }
     if (type === "stream/error") {
