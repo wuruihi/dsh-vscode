@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ApprovalCard, QuestionCard } from "../protocol.js";
+import { Markdown } from "./markdown.js";
 
 export function ApprovalCardView({
   card,
@@ -80,30 +81,45 @@ export function QuestionCardView({
     <div className="msg">
       <div className="card question-card">
         <div className="card-title">❓ DSH 提问</div>
-        {card.questions.map((q) => (
-          <div key={q.id} className="q-block">
-            {q.header && <div className="q-header">{q.header}</div>}
-            <div className="q-text">{q.question}</div>
-            {(q.options ?? []).map((o) => {
-              const on = (selected[q.id] ?? []).includes(o.label);
-              return (
-                <label key={o.label} className={`q-option${on ? " is-on" : ""}`}>
-                  <input type={q.multi ? "checkbox" : "radio"} name={q.id} checked={on} onChange={() => toggle(q.id, q.multi, o.label)} />
-                  <span>
-                    {o.label}
-                    {o.description ? <span className="muted"> — {o.description}</span> : null}
-                  </span>
-                </label>
-              );
-            })}
-            <input
-              className="q-custom"
-              placeholder="或输入自定义回答…"
-              value={custom[q.id] ?? ""}
-              onChange={(e) => setCustom((prev) => ({ ...prev, [q.id]: e.target.value }))}
-            />
-          </div>
-        ))}
+        {card.questions.map((q) => {
+          const plan = q.intent?.kind === "plan-review" ? q.intent : undefined;
+          return (
+            <div key={q.id} className="q-block">
+              {q.header && <div className="q-header">{q.header}</div>}
+              {plan && <div className="q-intent-tag">📋 方案审阅 — 下方计划需你批准后才会执行</div>}
+              <div className="q-text">{q.question}</div>
+              {q.detail &&
+                (plan ? (
+                  <div className="plan-detail">
+                    <Markdown text={q.detail} />
+                  </div>
+                ) : (
+                  <div className="q-detail muted">{q.detail}</div>
+                ))}
+              {(q.options ?? []).map((o) => {
+                const on = (selected[q.id] ?? []).includes(o.label);
+                const isApprove = plan != null && o.label === plan.approve;
+                return (
+                  <label key={o.label} className={`q-option${on ? " is-on" : ""}${isApprove ? " is-approve" : ""}`}>
+                    <input type={q.multiSelect ? "checkbox" : "radio"} name={q.id} checked={on} onChange={() => toggle(q.id, q.multiSelect, o.label)} />
+                    <span>
+                      {isApprove ? "✓ " : ""}
+                      {o.label}
+                      {o.description ? <span className="muted"> — {o.description}</span> : null}
+                    </span>
+                  </label>
+                );
+              })}
+              <textarea
+                className="q-custom"
+                placeholder="或输入自定义回答…（可多行）"
+                rows={2}
+                value={custom[q.id] ?? ""}
+                onChange={(e) => setCustom((prev) => ({ ...prev, [q.id]: e.target.value }))}
+              />
+            </div>
+          );
+        })}
         <div className="card-actions">
           <button className="btn btn-primary" disabled={!complete} onClick={submit}>
             提交回答

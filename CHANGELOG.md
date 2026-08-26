@@ -4,6 +4,16 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.5.7 — 对齐 dsh 0.1.1-rc.2（图片链路 + 提问卡 + 拉起行为）
+
+- **图片接收渲染**（此前只有发送、没有渲染，历史里的图一律不可见）：rc.8 起宿主把会话日志里的图片改为持久化引用 `{type:"image", attachment:{attachmentId,…}}`——webview 侧 fold 提取引用，按需经扩展宿主调新 RPC `session.attachment` 拉字节（协议知识仍只在 src/connection，架构规则不破），LRU 缓存 32 张跨 re-fold 复用；pre-rc.8 内联 base64 形状直接渲染（重启宿主前后都能显示图）；点击缩略图放大/还原；拉取失败降级 🖼✕ 占位
+- **一键拉起加 `--no-open`**：rc.8 起本地 `dsh web` 启动会自动开浏览器，插件拉起场景下是干扰（用户已在面板里），拉起命令显式抑制
+- **提问卡多行输入**：自定义回答 input → textarea（可多行、可拉高），对齐 GUI rc.1 行为
+- **修多选题渲染 bug**：wire 字段实为 `multiSelect`，旧代码读 `q.multi`——多选题一直被渲染成单选（选一项就清另一项）；实测 rc.2 的 AskUserQuestionItem 类型定案
+- **plan-review 意图识别**：提问项新增 `intent:{kind:"plan-review", approve}` 展示意图——识别后渲染「📋 方案审阅」标记 + plan markdown 滚动区 + 批准选项绿色高亮；不识别时按通用选项渲染也安全（协议不变，纯展示层）
+- **detail 字段渲染**：普通提问的 detail 以 muted 小字展示（此前整个丢弃）
+- 协议面对照验证（dsh-host-apiproxy rc.2 类型声明 + dsh-client-connection 网关源码）：扩展所用 17 个 RPC 方法、WS 帧联合、respond 裸回执、PromptContentPart 逐字段兼容，无破坏
+
 ## v0.5.6 — 对齐本体引号修复 + GUI 修复链实证对照
 
 - **实证对照**（genui 插件源码逐函数拆解 + 五条 badcase 实测）：GUI 的修复链为"提取+截断候选(G)→未转义引号/尾逗号(xn)→括号栈删错闭符/补开符(Sn)"，对我们的五条 badcase **全部无解**（xn/Sn 实测返回 null）——GUI 依赖截断渲染（丢内容）或客气降级提示；"本体从不失败"是选择偏差（坏消息都在插件会话，未在 GUI 打开过）+ 失败死得体面 + 生成侧 validate_dsh_ui 工具拦截

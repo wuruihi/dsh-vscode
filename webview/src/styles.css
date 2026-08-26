@@ -409,6 +409,38 @@ body {
   background: var(--vscode-input-background); color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px;
 }
+textarea.q-custom { resize: vertical; min-height: 26px; font: inherit; line-height: 1.4; }
+
+/* question extras (rc.8+) */
+.q-detail { margin: 2px 0 4px; font-size: 12px; white-space: pre-wrap; }
+.q-intent-tag {
+  font-size: 11px; font-weight: 600; margin: 2px 0 4px; padding: 2px 6px; border-radius: 4px;
+  color: var(--vscode-charts-blue, #75beff);
+  background: var(--vscode-list-inactiveSelectionBackground, rgba(70,130,220,.12));
+}
+.plan-detail {
+  max-height: 320px; overflow: auto; margin: 4px 0; padding: 8px 10px;
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.25)); border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.07));
+  font-size: 12px;
+}
+.q-option.is-approve { border: 1px solid var(--vscode-charts-green, #89d185); border-radius: 4px; }
+.q-option.is-approve.is-on { background: rgba(137,209,133,.22); }
+
+/* user-message images */
+.msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 12% 0 0; justify-content: flex-end; }
+.msg-img {
+  max-height: 150px; max-width: 220px; border-radius: 6px; cursor: zoom-in; object-fit: cover;
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.25));
+}
+.msg-img.is-open { max-height: none; max-width: 100%; object-fit: contain; cursor: zoom-out; }
+.msg-img-box {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 64px; min-height: 44px; border-radius: 6px; font-size: 12px;
+  border: 1px dashed var(--vscode-panel-border, rgba(128,128,128,.4));
+  color: var(--vscode-descriptionForeground);
+}
+.msg-img-box.is-error { border-style: solid; color: var(--vscode-errorForeground, #f48771); }
 
 /* queue strip */
 .queue-strip {

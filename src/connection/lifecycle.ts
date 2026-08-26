@@ -121,7 +121,9 @@ export class DshLifecycle {
         const logErr = `${home}\\.dsh\\dsh-vscode-web.err.log`;
         const ps = [
           `$p = Start-Process -FilePath '${escapePs(nodePath)}'`,
-          `-ArgumentList '"${escapePs(dshBin)}" web --host 127.0.0.1 --port ${port}'`,
+          // --no-open: rc.8+ auto-opens the browser on local starts — wrong
+          // here, the user is already IN the VSCode panel doing the starting.
+          `-ArgumentList '"${escapePs(dshBin)}" web --no-open --host 127.0.0.1 --port ${port}'`,
           `-WorkingDirectory '${escapePs(home)}'`,
           `-RedirectStandardOutput '${escapePs(logOut)}' -RedirectStandardError '${escapePs(logErr)}'`,
           `-WindowStyle Hidden -PassThru; Write-Host $p.Id`,

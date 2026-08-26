@@ -124,6 +124,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           if (!opened) void diff.openTurnSummary();
         });
         break;
+      case "get-attachment":
+        void manager.getAttachment(m.sessionId, m.attachmentId);
+        break;
       case "log":
         log(`[webview] ${m.message}`);
         break;

@@ -39,6 +39,20 @@ export interface UserItem {
   /** attachment labels (file names) carried by this message — rendered as
    *  chips, never as inline content. */
   files?: string[];
+  /** images carried by this message. rc.8+ logs durable refs
+   *  ({attachment, attachmentId}); pre-rc.8 logs inline base64. */
+  images?: FoldImage[];
+}
+
+/** One renderable image in a user message: either a durable ref to pull via
+ *  session.attachment, or an already-complete data URL (legacy inline shape). */
+export interface FoldImage {
+  attachmentId?: string;
+  dataUrl?: string;
+  mediaType: string;
+  name?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface InfoItem {
@@ -99,9 +113,16 @@ export class ConversationFold {
         // keep their human text after paragraph-level stripping.
         // File-attachment content parts arrive as separate text blocks shaped
         // "[引用文件 X]\n<content>" — extract the label, drop the content.
-        const { text, files } = extractUserPayload(ev.data);
-        if (text || files.length > 0) {
-          this.items.push({ kind: "user", key: `u${this.lastSeq}-${this.items.length}`, text, ...(files.length > 0 ? { files } : {}) });
+        // Image parts: rc.8+ durable refs / pre-rc.8 inline base64.
+        const { text, files, images } = extractUserPayload(ev.data);
+        if (text || files.length > 0 || images.length > 0) {
+          this.items.push({
+            kind: "user",
+            key: `u${this.lastSeq}-${this.items.length}`,
+            text,
+            ...(files.length > 0 ? { files } : {}),
+            ...(images.length > 0 ? { images } : {}),
+          });
         }
         break;
       }
@@ -376,13 +397,14 @@ function parseJson(raw: unknown): unknown {
   }
 }
 
-/** Extract (human text, attachment labels) from a user/message payload.
+/** Extract (human text, attachment labels, images) from a user/message payload.
  *  Attachment parts are text blocks starting with "[引用文件 X]"; their
  *  content is dropped here — the bubble shows chips, never file content. */
-function extractUserPayload(data: unknown): { text: string; files: string[] } {
+function extractUserPayload(data: unknown): { text: string; files: string[]; images: FoldImage[] } {
   const d = (data ?? {}) as any;
   const parts: string[] = [];
   const files: string[] = [];
+  const images: FoldImage[] = [];
   const consider = (t: string): void => {
     const m = /^\[引用文件 (.+?)\]\n?/.exec(t.trim());
     if (m) {
@@ -391,9 +413,34 @@ function extractUserPayload(data: unknown): { text: string; files: string[] } {
     }
     parts.push(t);
   };
+  const imageOf = (c: any): FoldImage | undefined => {
+    if (!c || typeof c !== "object") return undefined;
+    // rc.8+ durable: {type:"image", attachment:{attachmentId, mediaType, name?, width?, height?}}
+    const ref = c.attachment;
+    if (ref && typeof ref === "object" && typeof ref.attachmentId === "string" && ref.attachmentId) {
+      return {
+        attachmentId: ref.attachmentId,
+        mediaType: typeof ref.mediaType === "string" ? ref.mediaType : "image/png",
+        ...(typeof ref.name === "string" && ref.name ? { name: ref.name } : {}),
+        ...(typeof ref.width === "number" ? { width: ref.width } : {}),
+        ...(typeof ref.height === "number" ? { height: ref.height } : {}),
+      };
+    }
+    // pre-rc.8 inline: {type:"image", mediaType, data(base64)}
+    if (typeof c.data === "string" && c.data) {
+      const mediaType = typeof c.mediaType === "string" ? c.mediaType : "image/png";
+      return { dataUrl: `data:${mediaType};base64,${c.data}`, mediaType };
+    }
+    return undefined;
+  };
   if (typeof d.text === "string") consider(d.text);
   else if (Array.isArray(d.content)) {
     for (const c of d.content) {
+      const img = c?.type === "image" ? imageOf(c) : undefined;
+      if (img) {
+        images.push(img);
+        continue;
+      }
       if (c && typeof c.text === "string" && c.text) consider(c.text);
     }
   } else if (typeof d.content === "string") consider(d.content);
@@ -403,8 +450,8 @@ function extractUserPayload(data: unknown): { text: string; files: string[] } {
   // only remove the head paragraph and keep the whole body. A message whose
   // first paragraph is an instruction head is an injection carrier: drop all.
   const firstLine = (raw.split(/\n\s*\n/, 1)[0] ?? "").split("\n", 1)[0]?.trim() ?? "";
-  if (/^Instructions from\b/.test(firstLine)) return { text: "", files };
-  return { text: stripSystemContext(raw), files };
+  if (/^Instructions from\b/.test(firstLine)) return { text: "", files, images };
+  return { text: stripSystemContext(raw), files, images };
 }
 
 // ---- stripSystemContext (paragraph-level, Obsidian-proven core + VSCode extras) ----

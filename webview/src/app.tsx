@@ -12,7 +12,7 @@ import type {
   SessionItem,
   ViewToExt,
 } from "./protocol.js";
-import { ConversationFold, stripSystemContext, type FoldItem, type ToolActivity } from "./fold.js";
+import { ConversationFold, stripSystemContext, type FoldImage, type FoldItem, type ToolActivity } from "./fold.js";
 import { Markdown } from "./components/markdown.js";
 import { ActivityCard } from "./components/activity.js";
 import { ApprovalCardView, QuestionCardView } from "./components/cards.js";
@@ -26,6 +26,28 @@ const vscodeApi = (window as unknown as { __dshApi?: { postMessage(m: ViewToExt)
 const post = (m: ViewToExt) => vscodeApi.postMessage(m);
 
 const RENDER_WINDOW = 250; // items rendered max; older pages on demand
+
+// ---- durable-image cache (webview-side, keyed by attachmentId) ----
+// The fold carries refs only; bytes are pulled on demand via the extension
+// host (protocol knowledge stays host-side) and cached here. Survives re-folds
+// (settle reloads, older pages) — only a webview reload refetches.
+type ImgEntry = { mediaType: string; data: string } | "loading" | "error";
+const imgCache = new Map<string, ImgEntry>();
+const IMG_CACHE_MAX = 32;
+const imgListeners = new Set<() => void>();
+function imgNotify(): void {
+  for (const l of imgListeners) l();
+}
+function imgCacheSet(id: string, entry: ImgEntry): void {
+  imgCache.delete(id); // LRU touch: re-insert at the end
+  imgCache.set(id, entry);
+  while (imgCache.size > IMG_CACHE_MAX) {
+    const oldest = imgCache.keys().next().value;
+    if (oldest === undefined) break;
+    imgCache.delete(oldest);
+  }
+  imgNotify();
+}
 
 export function App() {
   const [conn, setConn] = useState<ConnState>("connecting");
@@ -175,6 +197,13 @@ export function App() {
         case "notify":
           setNotify({ kind: m.kind, message: m.message });
           setTimeout(() => setNotify(undefined), 6000);
+          break;
+        case "attachment":
+          if (m.data) imgCacheSet(m.attachmentId, { mediaType: m.mediaType, data: m.data });
+          else imgCacheSet(m.attachmentId, "error");
+          break;
+        case "attachment-error":
+          imgCacheSet(m.attachmentId, "error");
           break;
         default:
           break;
@@ -457,7 +486,7 @@ export function App() {
         )}
         {hiddenCount > 0 && <div className="muted pad">（{hiddenCount} 条更早消息已折叠，向上滚动定位）</div>}
         {visible.map((it) => (
-          <ItemView key={it.key} item={it} />
+          <ItemView key={it.key} item={it} sessionId={current} />
         ))}
         {approvals.map((a) => (
           <ApprovalCardView
@@ -747,7 +776,7 @@ export function App() {
   );
 }
 
-function ItemView({ item }: { item: FoldItem }) {
+function ItemView({ item, sessionId }: { item: FoldItem; sessionId?: string }) {
   if (item.kind === "user") {
     return (
       <div className="msg user">
@@ -759,6 +788,13 @@ function ItemView({ item }: { item: FoldItem }) {
             ))}
           </div>
         )}
+        {item.images && item.images.length > 0 && (
+          <div className="msg-images">
+            {item.images.map((im, i) => (
+              <MsgImage key={im.attachmentId ?? `inl${i}`} img={im} sessionId={sessionId} />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -766,6 +802,67 @@ function ItemView({ item }: { item: FoldItem }) {
     return <div className="msg muted">{item.text}</div>;
   }
   return <TurnView item={item} />;
+}
+
+/** One image in a user message. Durable refs pull bytes through the extension
+ *  host (session.attachment) with an LRU cache; inline legacy shapes render
+ *  straight from their data URL. Click toggles thumbnail/full size. */
+function MsgImage({ img, sessionId }: { img: FoldImage; sessionId?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    const h = () => forceRender((v) => v + 1);
+    imgListeners.add(h);
+    return () => {
+      imgListeners.delete(h);
+    };
+  }, []);
+  // Request-on-miss lives in the effect: render stays pure (no cache writes
+  // that would synchronously notify other mounted images).
+  useEffect(() => {
+    if (img.dataUrl || !sessionId || !img.attachmentId) return;
+    if (!imgCache.has(img.attachmentId)) {
+      imgCache.set(img.attachmentId, "loading");
+      post({ t: "get-attachment", sessionId, attachmentId: img.attachmentId });
+    }
+  }, [img.attachmentId, img.dataUrl, sessionId]);
+
+  const title = [img.name, img.width && img.height ? `${img.width}×${img.height}` : undefined]
+    .filter(Boolean)
+    .join(" · ") || undefined;
+
+  if (img.dataUrl) {
+    return (
+      <img
+        className={`msg-img${expanded ? " is-open" : ""}`}
+        src={img.dataUrl}
+        alt={img.name ?? "图片"}
+        title={title}
+        onClick={() => setExpanded((v) => !v)}
+      />
+    );
+  }
+
+  const entry = imgCache.get(img.attachmentId!);
+  if (entry === undefined || entry === "loading") {
+    return <span className="msg-img-box" title={title}>🖼…</span>;
+  }
+  if (entry === "error") {
+    return (
+      <span className="msg-img-box is-error" title="加载失败：宿主不支持或引用已失效">
+        🖼✕
+      </span>
+    );
+  }
+  return (
+    <img
+      className={`msg-img${expanded ? " is-open" : ""}`}
+      src={`data:${entry.mediaType};base64,${entry.data}`}
+      alt={img.name ?? "图片"}
+      title={title}
+      onClick={() => setExpanded((v) => !v)}
+    />
+  );
 }
 
 const TurnView = ({ item }: { item: any }) => {

@@ -460,6 +460,28 @@ export class SessionManager {
     }
   }
 
+  /** Pull one durable image's bytes for the webview (rc.8+ hosts log images
+   *  as {attachmentId} refs; pre-rc.8 hosts never get asked — inline parts
+   *  render client-side). Failure degrades to a broken-image placeholder. */
+  async getAttachment(sessionId: string, attachmentId: string): Promise<void> {
+    try {
+      const v = await this.lifecycle.client.call<{ attachment?: { mediaType?: string }; data?: string }>(
+        "session.attachment",
+        { sessionId, attachmentId },
+      );
+      this.host.post({
+        t: "attachment",
+        sessionId,
+        attachmentId,
+        mediaType: typeof v?.attachment?.mediaType === "string" ? v.attachment.mediaType : "image/png",
+        data: typeof v?.data === "string" ? v.data : "",
+      });
+    } catch (err) {
+      warn(`[manager] attachment fetch failed (${attachmentId}): ${errText(err)}`);
+      this.host.post({ t: "attachment-error", sessionId, attachmentId });
+    }
+  }
+
   /** Slash-menu entries: skills (insert `/name ` text — the host pre-step
    *  gesture injects content) + built-in commands (dispatch via RPC).
    *  Wire reality (live-probed): skills ride the apiproxy endpoint

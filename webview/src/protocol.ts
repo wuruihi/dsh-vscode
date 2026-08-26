@@ -55,12 +55,16 @@ export interface ApprovalCard {
 export interface QuestionCard {
   sessionId: string;
   rpcId: string;
+  /** Raw wire shape (AskUserQuestionItem): multiSelect — NOT `multi` — plus
+   *  detail and the plan-review presentation intent (rc.8+). */
   questions: {
     id: string;
     question: string;
     header?: string;
-    multi?: boolean;
+    detail?: string;
+    multiSelect?: boolean;
     options?: { label: string; description?: string }[];
+    intent?: { kind: "plan-review"; approve: string };
   }[];
 }
 
@@ -95,7 +99,10 @@ export type ExtToView =
   | { t: "inject-attachment"; label: string; text: string }
   | { t: "files"; reqId: number; items: { path: string; rel: string }[] }
   | { t: "slash"; reqId: number; items: { kind: "skill" | "command"; name: string; description: string }[] }
-  | { t: "notify"; kind: "info" | "warn" | "error"; message: string };
+  | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
+  /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
+  | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
+  | { t: "attachment-error"; sessionId: string; attachmentId: string };
 
 /** webview -> extension host */
 export type ViewToExt =
@@ -119,4 +126,5 @@ export type ViewToExt =
   | { t: "list-slash"; reqId: number; sessionId: string }
   | { t: "run-command"; sessionId: string; line: string }
   | { t: "open-diff"; callId: string }
+  | { t: "get-attachment"; sessionId: string; attachmentId: string }
   | { t: "log"; message: string };
