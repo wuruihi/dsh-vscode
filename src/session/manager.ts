@@ -582,7 +582,7 @@ export class SessionManager {
       this.host.post({
         t: "notify",
         kind: "warn",
-        message: receipt.reason === "not-pending" ? "该审批卡已过期（连接重连过），请在新刷新的卡片上操作" : "审批应答被拒绝，请重试",
+        message: receipt.reason === "not-pending" ? "该审批已失效：可能已被其他窗口处理或已超时；若 DSH 仍在等待会出现新的审批卡" : "审批应答被拒绝，请重试",
       });
     }
   }
@@ -596,7 +596,7 @@ export class SessionManager {
       this.host.post({
         t: "notify",
         kind: "warn",
-        message: receipt.reason === "not-pending" ? "该提问卡已过期（连接重连过），请在新刷新的卡片上作答" : "应答被拒绝，请重试",
+        message: receipt.reason === "not-pending" ? "该提问已失效：可能已被其他窗口应答或已超时；若 DSH 仍在等待会弹出新的提问卡" : "应答被拒绝，请重试",
       });
     }
   }
