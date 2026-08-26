@@ -492,6 +492,8 @@ export function App() {
           <ApprovalCardView
             key={a.approvalId}
             card={a}
+            sourceTitle={a.sessionId !== current ? (sessions.find((s) => s.sessionId === a.sessionId)?.title ?? "未命名会话") : undefined}
+            onJump={a.sessionId !== current ? () => post({ t: "switch", sessionId: a.sessionId }) : undefined}
             onAnswer={(outcome) => {
               setApprovals((xs) => xs.filter((x) => x.approvalId !== a.approvalId));
               post({ t: "respond-approval", rpcId: a.rpcId, sessionId: a.sessionId, approvalId: a.approvalId, outcome });
@@ -502,6 +504,8 @@ export function App() {
           <QuestionCardView
             key={q.rpcId}
             card={q}
+            sourceTitle={q.sessionId !== current ? (sessions.find((s) => s.sessionId === q.sessionId)?.title ?? "未命名会话") : undefined}
+            onJump={q.sessionId !== current ? () => post({ t: "switch", sessionId: q.sessionId }) : undefined}
             onAnswer={(answers) => {
               setQuestions((xs) => xs.filter((x) => x.rpcId !== q.rpcId));
               post({ t: "respond-question", rpcId: q.rpcId, sessionId: q.sessionId, answers });

@@ -582,3 +582,7 @@ textarea.q-custom { resize: vertical; min-height: 26px; font: inherit; line-heig
 .dui-tree-count { flex: none; font-size: 10.5px; opacity: .55; }
 .dui-tree-dir { cursor: pointer; font-weight: 600; }
 .dui-tree-dir:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.15)); }
+
+/* foreign-session card origin badge */
+.card-source { display: inline-block; margin: 2px 0 6px; padding: 1px 8px; border: 1px solid var(--vscode-button-background, #4a7dfff0); border-radius: 10px; background: color-mix(in srgb, var(--vscode-button-background, #4a7dff) 14%, transparent); color: var(--vscode-button-foreground, inherit); font-size: 11px; line-height: 1.6; cursor: pointer; }
+.card-source:hover { background: color-mix(in srgb, var(--vscode-button-background, #4a7dff) 28%, transparent); }
