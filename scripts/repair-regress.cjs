@@ -20,13 +20,121 @@ const cases = [
   ["trailing prose (historical)", `{"items": [{"type": "text", "content": "x"}]}\n\n正文说明`, (v) => v.items.length === 1],
   ["unescaped inner quotes (host GUI xn parity)", `{"items": [{"type": "text", "content": "他说"你好"然后走了"}]}`, (v) => v.items[0].content === `他说"你好"然后走了`],
   ["trailing comma (host GUI xn parity)", `{"items": [{"type": "text", "content": "a"},],}`, (v) => v.items.length === 1],
+  ["bare component root, valid JSON (badcase 6 verbatim)", `{
+  "type": "file-tree",
+  "items": [
+    {
+      "name": "技术反制",
+      "type": "dir",
+      "children": [
+        {
+          "name": "资金账户反制",
+          "type": "dir",
+          "children": [
+            {
+              "name": "接警止付（页签：银行卡止付 / 第三方止付 / 流水号止付）",
+              "type": "dir",
+              "children": [
+                {
+                  "name": "警单列表→止付账号列表，对接国反平台（RPA），批量止付需同类型",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "资金止付（原受害人止付）",
+              "type": "dir",
+              "children": [
+                {
+                  "name": "国反平台止付（页签：待止付/待反馈/止付失败/已止付/全部）",
+                  "type": "dir",
+                  "children": [
+                    {
+                      "name": "资金预警自动生成卡级任务，循环止付，无需审批",
+                      "type": "file"
+                    }
+                  ]
+                },
+                {
+                  "name": "人行渠道止付（原手动止付数据，字段调整）",
+                  "type": "dir",
+                  "children": [
+                    {
+                      "name": "资金预警推送的人员级止付，一次推送默认15天，支持解除，有审核状态",
+                      "type": "file"
+                    }
+                  ]
+                },
+                {
+                  "name": "受害人银行卡库",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "手动止付（重构：省厅4手段）",
+              "type": "dir",
+              "children": [
+                {
+                  "name": "只收不付/不收不付/限额管控/限非 → 人员级表单，提交→分局→市局审批→推送省厅",
+                  "type": "file"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "通信渠道反制",
+          "type": "dir",
+          "children": [
+            {
+              "name": "涉诈号码反制（待反制/反制详单/命中白名单）",
+              "type": "file"
+            },
+            {
+              "name": "涉诈网址反制",
+              "type": "file"
+            },
+            {
+              "name": "受害人号码反制",
+              "type": "file"
+            },
+            {
+              "name": "手动反制",
+              "type": "file"
+            }
+          ]
+        },
+        {
+          "name": "反制策略管理",
+          "type": "file"
+        },
+        {
+          "name": "反制函件管理",
+          "type": "file"
+        },
+        {
+          "name": "反制白名单",
+          "type": "file"
+        },
+        {
+          "name": "流程审批中心（通信渠道/资金账户子菜单）",
+          "type": "file"
+        }
+      ]
+    }
+  ]
+}`, (v) => v.items[0].type === "file-tree" && v.items[0].items[0].name === "技术反制" && v.items[0].items[0].children[0].children[1].children[2].name === "受害人银行卡库"],
+  ["bare component array root, valid JSON", `[{"type":"text","content":"a"},{"type":"badge","label":"b"}]`, (v) => v.items.length === 2 && v.items[1].type === "badge"],
+  ["bare string array still rejected (no unambiguous intent)", `["a","b"]`, "reject"],
 ];
 
 let pass = 0;
 for (const [name, input, check] of cases) {
   try {
     const v = parseSpec(input);
-    const ok = v ? check(v) : false;
+    // check === "reject" asserts honest degradation (parseSpec must return null)
+    const ok = check === "reject" ? v === null : v ? check(v) : false;
     console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
     if (ok) pass++;
     else console.log("   got:", JSON.stringify(v)?.slice(0, 120));

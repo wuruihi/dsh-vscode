@@ -377,17 +377,49 @@ function escapeInnerQuotes(s: string): string | null {
   }
 }
 
+/** Component types RenderNode knows. The shell root ({title?, gap?, items})
+ *  NEVER carries `type` — so a directly-parsed object with one of these types
+ *  at root is an unambiguous bare-component payload (badcase 6: the model
+ *  emitted the file-tree component itself as the fence root). */
+const COMPONENT_TYPES = new Set([
+  "text", "table", "list", "steps", "timeline", "callout", "badge", "link", "copy",
+  "json", "code", "keyvalue", "grid", "stat", "progress", "divider", "spacer",
+  "col", "row", "card", "avatar", "breadcrumb", "tabs", "accordion", "chart",
+  "mermaid", "plot", "file-tree",
+]);
+
+/** Wrap bare-component roots / arrays into the shell form. Runs on every
+ *  directly-parsed success path (repairSpec already handles this for broken
+ *  JSON — valid JSON used to short-circuit past it). Non-component payloads
+ *  pass through untouched; bare non-component arrays have no unambiguous
+ *  intent → null (caller degrades honestly). */
+function normalizeRoot(v: any): any {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    if (typeof v.type === "string" && COMPONENT_TYPES.has(v.type)) {
+      return typeof v.title === "string" ? { title: v.title, items: [v] } : { items: [v] };
+    }
+    return v;
+  }
+  if (Array.isArray(v) && v.length > 0) {
+    if (v.every((c) => c && typeof c === "object" && typeof c.type === "string" && COMPONENT_TYPES.has(c.type))) {
+      return { items: v };
+    }
+    return null;
+  }
+  return v && typeof v === "object" ? v : null;
+}
+
 function parseSpec(raw: string): Node | null {
   try {
     const v = JSON.parse(raw);
-    return v && typeof v === "object" ? v : null;
+    return normalizeRoot(v);
   } catch {
     /* fallthrough */
   }
   const cheap = cheapRepairs(raw);
   try {
     const v = JSON.parse(cheap);
-    return v && typeof v === "object" ? v : null;
+    return normalizeRoot(v);
   } catch {
     /* fallthrough */
   }
@@ -396,7 +428,7 @@ function parseSpec(raw: string): Node | null {
   if (quoted) {
     try {
       const v = JSON.parse(quoted);
-      if (v && typeof v === "object") return v;
+      if (v && typeof v === "object") return normalizeRoot(v);
     } catch {
       /* fallthrough */
     }
@@ -406,7 +438,7 @@ function parseSpec(raw: string): Node | null {
   if (wrapped) {
     try {
       const v = JSON.parse(wrapped);
-      if (v && typeof v === "object") return v;
+      if (v && typeof v === "object") return normalizeRoot(v);
     } catch {
       /* fallthrough */
     }
@@ -416,7 +448,7 @@ function parseSpec(raw: string): Node | null {
   if (closed) {
     try {
       const v = JSON.parse(closed);
-      if (v && typeof v === "object") return v;
+      if (v && typeof v === "object") return normalizeRoot(v);
     } catch {
       /* fallthrough */
     }
@@ -426,7 +458,7 @@ function parseSpec(raw: string): Node | null {
     if (wrapped2) {
       try {
         const v = JSON.parse(wrapped2);
-        if (v && typeof v === "object") return v;
+        if (v && typeof v === "object") return normalizeRoot(v);
       } catch {
         /* fallthrough */
       }
@@ -661,10 +693,51 @@ export function RenderNode({ node }: { node: Node }) {
       return <Mermaid code={String(node.code ?? "")} />;
     case "plot":
       return <Plot node={node} />;
+    case "file-tree":
+      return <FileTree items={node.items ?? []} />;
     default:
       // Unknown / interactive (quiz, plot, mermaid, scene3d, …): degrade to code.
       return <pre className="code-block dui-code">{safeJson(node)}</pre>;
   }
+}
+
+/** Collapsible file/dir tree (badcase 6's missing component). Node shape:
+ *  {name, type:"dir"|"file", children?:[...]}. Long business-logic names
+ *  wrap instead of overflowing. */
+function TreeNode({ node, depth }: { node: any; depth: number }) {
+  const [open, setOpen] = useState(true);
+  const name = String(node?.name ?? "");
+  const children: any[] = Array.isArray(node?.children) ? node.children : [];
+  const isDir = node?.type === "dir" || children.length > 0;
+  if (!isDir) {
+    return (
+      <div className="dui-tree-row" style={{ paddingLeft: depth * 16 + 6 }}>
+        <span className="dui-tree-ico">📄</span>
+        <span className="dui-tree-name">{name}</span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="dui-tree-row dui-tree-dir" style={{ paddingLeft: depth * 16 + 6 }} onClick={() => setOpen((v) => !v)}>
+        <span className="dui-tree-ico">{open ? "📂" : "📁"}</span>
+        <span className="dui-tree-name">{name}</span>
+        {children.length > 0 && <span className="dui-tree-count muted">{children.length}</span>}
+      </div>
+      {open && children.map((c, i) => <TreeNode key={i} node={c} depth={depth + 1} />)}
+    </div>
+  );
+}
+
+function FileTree({ items }: { items: any[] }) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return (
+    <div className="dui-tree">
+      {items.map((n, i) => (
+        <TreeNode key={i} node={n} depth={0} />
+      ))}
+    </div>
+  );
 }
 
 /** Numeric-aware sortable table (header click cycles asc → desc → original). */
