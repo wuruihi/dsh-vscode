@@ -422,6 +422,14 @@ export function App() {
             >
               <span className={`dot dot-${s.running ? "running" : "idle"}`} />
               <span className="session-title">{s.title ?? "（未命名会话）"}</span>
+              {s.subagents && s.subagents.total > 0 && (
+                <span
+                  className={`subagent-badge${s.subagents.running > 0 ? " is-busy" : ""}`}
+                  title={`${s.subagents.total} 个子代理任务（${s.subagents.running} 个进行中）— 子代理详情在 DSH 本体会话页查看`}
+                >
+                  🔧 {s.subagents.running > 0 ? `${s.subagents.running}/${s.subagents.total}` : s.subagents.total}
+                </span>
+              )}
               <button
                 className="icon-btn mini"
                 title="重命名"

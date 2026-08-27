@@ -586,3 +586,7 @@ textarea.q-custom { resize: vertical; min-height: 26px; font: inherit; line-heig
 /* foreign-session card origin badge */
 .card-source { display: inline-block; margin: 2px 0 6px; padding: 1px 8px; border: 1px solid var(--vscode-button-background, #4a7dfff0); border-radius: 10px; background: color-mix(in srgb, var(--vscode-button-background, #4a7dff) 14%, transparent); color: var(--vscode-button-foreground, inherit); font-size: 11px; line-height: 1.6; cursor: pointer; }
 .card-source:hover { background: color-mix(in srgb, var(--vscode-button-background, #4a7dff) 28%, transparent); }
+
+/* subagent count badge on session rows */
+.subagent-badge { flex: none; margin-left: auto; padding: 0 7px; border-radius: 9px; font-size: 10.5px; line-height: 1.7; opacity: .75; background: rgba(128,128,128,.18); }
+.subagent-badge.is-busy { opacity: 1; background: color-mix(in srgb, var(--vscode-button-background, #4a7dff) 22%, transparent); }

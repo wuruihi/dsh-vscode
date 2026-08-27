@@ -17,6 +17,9 @@ export interface SessionItem {
   blank: boolean;
   cwd?: string;
   agentPreset?: string;
+  /** Subagent children spawned by this session's agent (origin:"subagent"
+   *  rows are hidden from the list; their count surfaces here). */
+  subagents?: { total: number; running: number };
 }
 
 export interface ModelsData {

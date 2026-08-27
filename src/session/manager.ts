@@ -32,6 +32,11 @@ interface SessionRow {
   cwd?: string;
   agentPreset?: string;
   projections?: Record<string, unknown>;
+  /** Wire fact (probed): sessions spawned by the session's own agent carry
+   *  origin:"subagent" + parentSessionId. Top-level user sessions have
+   *  neither. Same cwd — they used to leak through the workspace filter. */
+  origin?: string;
+  parentSessionId?: string;
 }
 
 export class SessionManager {
@@ -124,7 +129,7 @@ export class SessionManager {
     this.enrichInFlight = true;
     try {
       const targets = this.sessionRows
-        .filter((r) => !r.blank && !titleOf(r) && !this.titleCache.has(r.sessionId))
+        .filter((r) => !r.blank && r.origin !== "subagent" && !titleOf(r) && !this.titleCache.has(r.sessionId))
         .slice(0, 30);
       if (targets.length === 0) return;
       const CONCURRENCY = 8;
@@ -226,10 +231,24 @@ export class SessionManager {
   }
 
   private visibleItems(): SessionItem[] {
+    // Subagent child count per parent (for the row badge) — counted before
+    // the subagent rows themselves are hidden from the list.
+    const kids = new Map<string, { total: number; running: number }>();
+    for (const r of this.sessionRows) {
+      if (r.origin === "subagent" && r.parentSessionId) {
+        const k = kids.get(r.parentSessionId) ?? { total: 0, running: 0 };
+        k.total++;
+        if (r.running) k.running++;
+        kids.set(r.parentSessionId, k);
+      }
+    }
     return this.sessionRows
       // Workspace-bound list: only this project's sessions (cwd match); the
       // active session stays visible even on a cwd edge (adopt/fork races).
-      .filter((r) => r.sessionId === this.currentSession || (!r.blank && sameDir(r.cwd)))
+      // Subagent sessions are the agent's own workers, not user switchable
+      // conversations (they share cwd and used to pollute the list) — hidden,
+      // surfaced instead as a count badge on the parent row.
+      .filter((r) => r.sessionId === this.currentSession || (!r.blank && r.origin !== "subagent" && sameDir(r.cwd)))
       .map((r) => ({
         sessionId: r.sessionId,
         title: titleOf(r) ?? this.titleCache.get(r.sessionId),
@@ -237,6 +256,7 @@ export class SessionManager {
         blank: r.blank,
         cwd: r.cwd,
         agentPreset: r.agentPreset,
+        subagents: kids.get(r.sessionId),
       }));
   }
 
