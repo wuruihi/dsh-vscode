@@ -127,6 +127,9 @@ const cases = [
 }`, (v) => v.items[0].type === "file-tree" && v.items[0].items[0].name === "技术反制" && v.items[0].items[0].children[0].children[1].children[2].name === "受害人银行卡库"],
   ["bare component array root, valid JSON", `[{"type":"text","content":"a"},{"type":"badge","label":"b"}]`, (v) => v.items.length === 2 && v.items[1].type === "badge"],
   ["bare string array still rejected (no unambiguous intent)", `["a","b"]`, "reject"],
+  ["bare callout root, type lost (badcase 7 verbatim)", `{"title":"核心判断","tone":"info","content":"当年建应用集成平台，是因为真合并太贵，结果只统一了门、没统一房子——客户看到的是一扇门，研发盖的还是两栋楼。今天所有被动（每个功能纠结放哪、两套消息、Vue2/Vue3 分叉、跨系统移动要重开发）的根源都在这。所以这次做真合并，时机和收敛度都是对的：不加新功能、纯整合，这个口径比我预期的好。"}`, (v) => v.items[0].type === "callout" && v.items[0].tone === "info" && v.items[0].title === "核心判断"],
+  ["bare table root, type lost (signature inference)", `{"columns":["a","b"],"rows":[["1","2"]]}`, (v) => v.items[0].type === "table" && v.items[0].rows.length === 1],
+  ["shell with title only stays un-wrapped (no false positive)", `{"title":"只有标题"}`, (v) => v.items === undefined && v.title === "只有标题"],
 ];
 
 let pass = 0;

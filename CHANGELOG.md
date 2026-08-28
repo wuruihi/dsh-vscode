@@ -4,6 +4,12 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.5.12 — badcase 7：裸组件根且丢 type，字段签名推断补壳
+
+- **形态**：`{"title":"核心判断","tone":"info","content":"…"}`——callout 的字段全在，但既没壳 `items` 也没 `type`。normalizeRoot 只认"带已知 type 的裸组件"，此形态穿透 → 渲染失败卡
+- **修法（无歧义原则延续）**：壳的合法字段仅 title/gap/panel/append/items——**组件独有字段出现在根上不可能是合法壳**。字段签名表：rows+columns→table、pairs→keyvalue、steps→steps、tone+content / title+content→callout、label+href→link、label+tone→badge、裸 content→text（最弱，垫底）。命中即注入 type 并包壳；`{title:"…"}` 这类纯壳字段对象不误伤（原样透传，渲染层诚实降级）
+- 回归 14 用例（badcase 7 原文逐字 + 签名表抽查 + 无假阳性守门），双套件 22/22
+
 ## v0.5.11 — 会话列表去子代理污染 + 父行子代理徽标
 
 - **badcase**：agent 派的子代理会话（用户发起或 AI 自主）混进插件会话列表，与主会话并列，用户困惑"哪条是我的对话"。GUI 里子代理挂在会话名下（"n 个子代理"可下钻），插件此前平铺

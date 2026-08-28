@@ -388,6 +388,26 @@ const COMPONENT_TYPES = new Set([
   "mermaid", "plot", "file-tree",
 ]);
 
+/** Badcase 7: a bare component root that ALSO lost its `type` field
+ *  ({title, tone, content} = callout with no type). Shell-legal keys are
+ *  title/gap/panel/append/items ONLY — so a component-exclusive field on the
+ *  root can never be a valid shell, and these signatures map to exactly one
+ *  component. Strongest (multi-field) signatures first; bare `content` last
+ *  as the weakest (text). Null = no confident match. */
+function inferComponentType(v: Record<string, unknown>): string | null {
+  if (Array.isArray(v.items) || typeof v.type === "string") return null;
+  const has = (k: string) => v[k] !== undefined && v[k] !== null && v[k] !== "";
+  if (has("rows") && has("columns")) return "table";
+  if (has("pairs")) return "keyvalue";
+  if (has("steps")) return "steps";
+  if (has("tone") && has("content")) return "callout";
+  if (has("title") && has("content")) return "callout";
+  if (has("label") && has("href")) return "link";
+  if (has("label") && has("tone")) return "badge";
+  if (has("content")) return "text";
+  return null;
+}
+
 /** Wrap bare-component roots / arrays into the shell form. Runs on every
  *  directly-parsed success path (repairSpec already handles this for broken
  *  JSON — valid JSON used to short-circuit past it). Non-component payloads
@@ -398,6 +418,10 @@ function normalizeRoot(v: any): any {
     if (typeof v.type === "string" && COMPONENT_TYPES.has(v.type)) {
       return typeof v.title === "string" ? { title: v.title, items: [v] } : { items: [v] };
     }
+    // badcase 7: bare component that also lost its `type` — infer from
+    // component-exclusive field signatures, then wrap as that component
+    const inferred = inferComponentType(v as Record<string, unknown>);
+    if (inferred) return { items: [{ ...v, type: inferred }] };
     return v;
   }
   if (Array.isArray(v) && v.length > 0) {
