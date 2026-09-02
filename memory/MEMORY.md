@@ -109,3 +109,9 @@
 - **历史 vs 实时是两套文本载体**：session/page 持久层把 text/reasoning 增量压缩成 chunkrow/text-chunks|reasoning-chunks（data.texts[]），assistant/chunk 在历史里只剩 block/tool-call/usage/finish 帧。fold 这类双通道渲染器必须两套都接——「实时能看、重载丢正文」= 只接了实时通道的典型症状。fold-live.cjs（真实会话回放）应作为每次动 fold 的验证步骤
 - **竞品面板交互实证**：panels.ts makePanel + chat.css——fixed 遮罩 justify-flex-end + 右侧 sheet（min(400px,96vw)/宽 620px），0.16s 滑入，Esc+点遮罩关闭，head 放标题+控件+关闭钮。七个面板：工作区(搜索+分组管理)/任务/轨迹(wide+筛选+回合分隔)/设置(wide+schema表单+模型目录+发现模型+预设)/子代理(对话+追问+打断)/Cordis
 - v0.13.0 落地：五面板 Sheet 化+任务时长+轨迹时钟/回合分隔+子代理只读对话（subagent-history 协议）。剩余差距：设置表单/全文搜索(部署禁用)/子代理追问打断/工作区分组管理
+
+## v0.14.0-v0.15.0：停止键 + 设置表单（2026-09-02）
+
+- 竞品 jager 0.12.89 在 alpha.5 上确认死亡（用户实测空白/无列表）——对标期结束。它绑死旧协议无自适应层，Phase 0 双协议层是生死分界线
+- 设置 wire：settings/describe（14 命名空间，schemastery 序列化：schema.refs[id]{type,meta} + schema.dict{field→refId}）；settings/update {ns,patch,expectedRevision} 乐观锁；凭据走 credentials.set（面板只显状态不发值）。竞品 RPC 名提取法=从已装扩展 dist/extension.js grep 字符串
+- git 已入库至 v0.15.0（两次 commit，未 push）

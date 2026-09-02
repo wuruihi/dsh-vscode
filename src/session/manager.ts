@@ -630,16 +630,44 @@ export class SessionManager {
     }
   }
 
-  /** Read-only transcript of a child (subagent) session, rendered in the
-   *  subagents side sheet. Same session.history the main view loads, just
-   *  pointed at the child id. */
+  /** Subagent transcript. Wire fact (probed on alpha.5): the gateway does
+   *  NOT expose subagent.* to client Remotes ("invalid Remote endpoint" on
+   *  the stream carrier, 404 over HTTP) — the child IS a session, so we go
+   *  through session.history (snapshot/page adapter) with the child id. */
   async subagentHistory(childId: string): Promise<void> {
     try {
       const h = await this.lifecycle.client.call<{ events: unknown[] }>("session.history", { sessionId: childId, maxMessages: 400 });
-      this.host.post({ t: "subagent-history", sessionId: childId, entries: (h?.events ?? []) as any });
+      this.host.post({ t: "subagent-history", sessionId: childId, entries: ((h?.events ?? []) as any) });
     } catch (err) {
       this.host.post({ t: "notify", kind: "warn", message: `子代理对话读取失败：${errText(err)}` });
       this.host.post({ t: "subagent-history", sessionId: childId, entries: [] });
+    }
+  }
+
+  /** Steer a continuable subagent: session.prompt pointed at the child id. */
+  async subagentPrompt(childId: string, text: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("session.prompt", {
+        sessionId: childId,
+        mode: "queue",
+        content: [{ type: "text", text }],
+      });
+      this.host.post({ t: "notify", kind: "info", message: "已发送给子代理" });
+      await this.subagentHistory(childId);
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `子代理追问失败：${errText(err)}` });
+    }
+  }
+
+  /** Interrupt a running subagent: session.cancel pointed at the child id
+   *  (probe: fake id → session/not-found — schema accepted). */
+  async subagentInterrupt(childId: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("session.cancel", { sessionId: childId });
+      this.host.post({ t: "notify", kind: "info", message: "已请求打断子代理" });
+      await this.subagentHistory(childId);
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `子代理打断失败：${errText(err)}` });
     }
   }
 

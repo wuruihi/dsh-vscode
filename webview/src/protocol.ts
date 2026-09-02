@@ -163,6 +163,8 @@ export type ViewToExt =
   | { t: "pick-folder"; reqId: number }
   | { t: "open-settings" }
   | { t: "list-subagents"; reqId: number; sessionId: string }
-  | { t: "subagent-history"; sessionId: string }
+  | { t: "subagent-history"; childId: string }
+  | { t: "subagent-prompt"; childId: string; text: string }
+  | { t: "subagent-interrupt"; childId: string }
   | { t: "get-settings" }
   | { t: "save-setting"; ns: string; patch: Record<string, unknown>; revision: number };

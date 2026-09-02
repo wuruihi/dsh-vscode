@@ -96,8 +96,9 @@ export function App() {
   const [jobs, setJobs] = useState<{ id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[]>([]);
   const [subagentEntries, setSubagentEntries] = useState<{ id: string; mode: string; label: string; activity: string; hasChildren: boolean }[]>([]);
   // subagent transcript sheet: which child is open + its history events
-  const [subView, setSubView] = useState<{ id: string; label?: string } | null>(null);
+  const [subView, setSubView] = useState<{ id: string; label?: string; mode: string; activity: string } | null>(null);
   const [subEvents, setSubEvents] = useState<{ event: { type: string; seq?: number; time?: number; data?: any }; view?: any }[] | null>(null);
+  const [subDraft, setSubDraft] = useState("");
   // settings sheet (settings/describe + settings/update)
   const [settingsData, setSettingsData] = useState<{ writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null>(null);
   const [settingsEdits, setSettingsEdits] = useState<Record<string, unknown>>({});
@@ -806,9 +807,48 @@ export function App() {
           }
         >
           {subView ? (
-            <SubagentTranscript events={subEvents} />
+            <>
+              <SubagentTranscript events={subEvents} />
+              {subView.mode === "continuable" && (
+                <div className="sub-composer">
+                  {subView.activity === "active" && (
+                    <button
+                      className="btn sub-interrupt"
+                      title="打断正在运行的子代理"
+                      onClick={() => post({ t: "subagent-interrupt", childId: subView.id })}
+                    >
+                      打断
+                    </button>
+                  )}
+                  <input
+                    className="settings-input sub-input"
+                    placeholder="给子代理发消息（追问 / 补充指令）…"
+                    value={subDraft}
+                    onChange={(e) => setSubDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && subDraft.trim()) {
+                        post({ t: "subagent-prompt", childId: subView.id, text: subDraft.trim() });
+                        setSubDraft("");
+                      }
+                    }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    disabled={!subDraft.trim()}
+                    onClick={() => {
+                      if (subDraft.trim()) {
+                        post({ t: "subagent-prompt", childId: subView.id, text: subDraft.trim() });
+                        setSubDraft("");
+                      }
+                    }}
+                  >
+                    发送
+                  </button>
+                </div>
+              )}
+            </>
           ) : subagentEntries.length === 0 ? (
-            <div className="muted pad">本会话没有子代理。continuable 子代理可在 DSH 网页版继续对话。</div>
+            <div className="muted pad">本会话没有子代理。continuable 子代理可在面板里直接查看对话、追问和打断。</div>
           ) : (
             subagentEntries.map((sa) => (
               <div
@@ -816,9 +856,9 @@ export function App() {
                 className="sub-row sub-row-click"
                 title={`${sa.id}\n点击查看对话`}
                 onClick={() => {
-                  setSubView({ id: sa.id, label: sa.label });
+                  setSubView({ id: sa.id, label: sa.label, mode: sa.mode, activity: sa.activity });
                   setSubEvents(null);
-                  post({ t: "subagent-history", sessionId: sa.id });
+                  post({ t: "subagent-history", childId: sa.id });
                 }}
               >
                 <span className={`dot dot-${sa.activity === "active" ? "running" : "idle"}`} />

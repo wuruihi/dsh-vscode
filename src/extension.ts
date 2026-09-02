@@ -109,7 +109,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void manager.listSubagents(m.sessionId);
         break;
       case "subagent-history":
-        void manager.subagentHistory(m.sessionId);
+        void manager.subagentHistory(m.childId);
+        break;
+      case "subagent-prompt":
+        void manager.subagentPrompt(m.childId, m.text);
+        break;
+      case "subagent-interrupt":
+        void manager.subagentInterrupt(m.childId);
         break;
       case "get-settings":
         void manager.describeSettings();

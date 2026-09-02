@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.16.0 — 子代理面板：追问 + 打断（P2 主任务）
+
+- **交互**：子代理对话 Sheet 底部新增固定输入条（sticky）——输入消息回车/点发送即追问该子代理；子代理运行中（activity=active）时输入条左侧出现红色「打断」按钮；操作后自动刷新对话
+- **通道考古（关键纠偏）**：竞品的 subagent.history/prompt/interrupt 三个 RPC 在 alpha.5 网关上**已不存在**（HTTP 404；WS 流载体重试报 invalid Remote endpoint / unary cannot be opened through stream carrier）——正确通道是「子会话本身就是 session」：session.history（走我方 snapshot/page 适配层）/ session.prompt（mode:queue + content 数组）/ session.cancel，全部指向 childId。伪 id 零污染探针验证 schema（session/cancel → session/not-found 业务错=参数合法）
+- **教训入账**：竞品的 RPC 名只能当线索不能当事实——它绑的是 rc.x 时代端点；每个方法都要在当前网关上实测存活性
+- **验证**：compile/build 零错误；fold 9/9 + fence 8/8 + repair 14/14；vsix 281KB 已装机
+
 ## v0.14.0 — 运行中发送键变红色停止键 + v0.13.0 前七版本 git 入库
 
 - **停止按钮（用户需求）**：AI 执行期间（本会话 running），输入框右下角发送圆钮变为红色「停止」方块钮，点击即发 cancel 结束当前回合（与 Esc 同效），停止后输入框立即可发下一条；空闲时自动还原为发送键
