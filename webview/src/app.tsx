@@ -11,6 +11,7 @@ import type {
   QuestionCard,
   QueueItem,
   SessionItem,
+  SettingsNs,
   ViewToExt,
 } from "./protocol.js";
 import { ConversationFold, stripSystemContext, type FoldImage, type FoldItem, type ToolActivity, type TurnItem } from "./fold.js";
@@ -89,7 +90,7 @@ export function App() {
   const [permission, setPermission] = useState<PermissionData | undefined>();
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
-  const [drawer, setDrawer] = useState<"" | "sessions" | "workspace" | "jobs" | "traj" | "subs">("");
+  const [drawer, setDrawer] = useState<"" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings">("");
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[]>([]);
@@ -97,6 +98,10 @@ export function App() {
   // subagent transcript sheet: which child is open + its history events
   const [subView, setSubView] = useState<{ id: string; label?: string } | null>(null);
   const [subEvents, setSubEvents] = useState<{ event: { type: string; seq?: number; time?: number; data?: any }; view?: any }[] | null>(null);
+  // settings sheet (settings/describe + settings/update)
+  const [settingsData, setSettingsData] = useState<{ writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null>(null);
+  const [settingsEdits, setSettingsEdits] = useState<Record<string, unknown>>({});
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [wsQuery, setWsQuery] = useState("");
   const [trajFilter, setTrajFilter] = useState("");
   const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
@@ -259,6 +264,17 @@ export function App() {
           break;
         case "subagent-history":
           setSubEvents(m.entries as any);
+          break;
+        case "settings-describe":
+          setSettingsData(m.data);
+          setSettingsError(null);
+          break;
+        case "settings-saved":
+          if (m.ok) {
+            setSettingsEdits({});
+          } else {
+            setSettingsError(`${m.ns}：${m.error ?? "保存失败"}`);
+          }
           break;
         case "attachment":
           if (m.data) imgCacheSet(m.attachmentId, { mediaType: m.mediaType, data: m.data });
@@ -530,9 +546,13 @@ export function App() {
             <Icon name="box" size={13} />
           </button>
           <button
-            className="icon-btn"
-            title="扩展设置（DSH 服务器地址 / 认证令牌等）"
-            onClick={() => post({ t: "open-settings" })}
+            className={`icon-btn${drawer === "settings" ? " is-on" : ""}`}
+            title="设置：服务器设置表单（模型 / 界面 / Agent 行为）"
+            onClick={() => {
+              const opening = drawer !== "settings";
+              setDrawer((d) => (d === "settings" ? "" : "settings"));
+              if (opening) post({ t: "get-settings" });
+            }}
           >
             <Icon name="gear" size={13} />
           </button>
@@ -808,6 +828,22 @@ export function App() {
               </div>
             ))
           )}
+        </Sheet>
+      )}
+      {/* settings sheet — schema-driven server settings form (wide) */}
+      {drawer === "settings" && (
+        <Sheet wide title="⚙️ 服务器设置" onClose={() => setDrawer("")}>
+          <SettingsSheet
+            data={settingsData}
+            edits={settingsEdits}
+            error={settingsError}
+            onEdit={(key, value) => setSettingsEdits((e) => ({ ...e, [key]: value }))}
+            onSave={(ns, patch, revision) => {
+              setSettingsError(null);
+              post({ t: "save-setting", ns, patch, revision });
+            }}
+            onOpenExtSettings={() => post({ t: "open-settings" })}
+          />
         </Sheet>
       )}
       {renaming && (
@@ -1128,15 +1164,26 @@ export function App() {
             onPaste={(e) => void onPaste(e)}
             rows={3}
           />
-          <button
-            className="send-fab"
-            title="发送（Enter）"
-            aria-label="发送"
-            disabled={!draft.trim() && fileAtt.length === 0}
-            onClick={onSendDraft}
-          >
-            <Icon name="send" size={15} />
-          </button>
+          {busy ? (
+            <button
+              className="send-fab send-fab-stop"
+              title="停止当前回答（Esc 同效）——停止后可直接发送下一条"
+              aria-label="停止"
+              onClick={() => current && post({ t: "cancel", sessionId: current })}
+            >
+              <span className="stop-square" />
+            </button>
+          ) : (
+            <button
+              className="send-fab"
+              title="发送（Enter）"
+              aria-label="发送"
+              disabled={!draft.trim() && fileAtt.length === 0}
+              onClick={onSendDraft}
+            >
+              <Icon name="send" size={15} />
+            </button>
+          )}
         </div>
         <div className="composer-actions">
           <input
@@ -1381,6 +1428,150 @@ function SubagentTranscript({ events }: { events: { event: { type: string; seq?:
       ))}
     </div>
   );
+}
+
+/** Schema-driven server settings form (settings/describe namespaces).
+ *  schemastery serialization: schema.refs[id] = {type, meta, value?...},
+ *  schema.dict = {field → refId}. Secrets/credential-refs render as status
+ *  only (configured or not) — credential values are never shipped here. */
+function SettingsSheet({
+  data,
+  edits,
+  error,
+  onEdit,
+  onSave,
+  onOpenExtSettings,
+}: {
+  data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null;
+  edits: Record<string, unknown>;
+  error: string | null;
+  onEdit: (key: string, value: unknown) => void;
+  onSave: (ns: string, patch: Record<string, unknown>, revision: number) => void;
+  onOpenExtSettings: () => void;
+}) {
+  if (!data) return <div className="muted pad">⏳ 正在读取服务器设置…</div>;
+  if (data.namespaces.length === 0) return <div className="muted pad">（该服务器未开放设置描述）</div>;
+  return (
+    <div className="settings-list">
+      {error && <div className="settings-error">⚠️ {error}</div>}
+      {!data.writable && <div className="muted pad tiny">⚠️ 服务器标记为只读（配置文件不可写），保存会被拒绝。</div>}
+      {data.namespaces.map((ns) => {
+        const dict = ns.schema?.dict ?? {};
+        const fields = Object.entries(dict)
+          .map(([field, refId]) => ({ field, ref: ns.schema?.refs?.[refId as number] ?? ns.schema?.refs?.[String(refId)] }))
+          .filter((f) => !!f.ref);
+        const patch: Record<string, unknown> = {};
+        for (const { field, ref } of fields) {
+          const key = `${ns.ns}.${field}`;
+          if (!(key in edits)) continue;
+          const base = effectiveSetting(ns, field, ref);
+          if (JSON.stringify(edits[key]) !== JSON.stringify(base)) patch[field] = edits[key];
+        }
+        const dirty = Object.keys(patch).length > 0;
+        return (
+          <details key={ns.ns} className="settings-ns" open={fields.length <= 8}>
+            <summary>
+              <span className="settings-ns-name">{ns.ns}</span>
+              {ns.applies === "restart" && <span className="badge badge-restart">需重启</span>}
+              {ns.applies === "live" && <span className="badge badge-live">即时生效</span>}
+              {dirty && <span className="badge badge-edit">未保存</span>}
+            </summary>
+            <div className="settings-fields">
+              {fields.map(({ field, ref }) => {
+                const key = `${ns.ns}.${field}`;
+                const role = ref.meta?.role;
+                const secret = role === "secret" || role === "credential-ref";
+                const current = key in edits ? edits[key] : effectiveSetting(ns, field, ref);
+                if (secret) {
+                  const set = (ns.secrets ?? []).some((s) => s.path?.includes(field) && s.set);
+                  return (
+                    <div className="settings-field" key={field}>
+                      <span className="settings-label" title={`${field}（${role === "credential-ref" ? "凭据引用" : "密钥"}）`}>
+                        {field}
+                      </span>
+                      <span className={`settings-value muted${set ? " is-set" : ""}`}>{set ? "🔒 已配置" : "🔓 未配置（在服务器侧配置）"}</span>
+                    </div>
+                  );
+                }
+                if (ref.type === "const") {
+                  return (
+                    <div className="settings-field" key={field}>
+                      <span className="settings-label">{field}</span>
+                      <span className="settings-value muted">{String(ref.value ?? "—")}</span>
+                    </div>
+                  );
+                }
+                if (ref.type === "boolean") {
+                  return (
+                    <div className="settings-field" key={field}>
+                      <span className="settings-label">{field}</span>
+                      <label className="settings-check">
+                        <input type="checkbox" checked={!!current} onChange={(e) => onEdit(key, e.target.checked)} />
+                      </label>
+                    </div>
+                  );
+                }
+                if (ref.type === "number") {
+                  return (
+                    <div className="settings-field" key={field}>
+                      <span className="settings-label" title={ref.meta?.description ?? field}>{field}</span>
+                      <input
+                        className="settings-input"
+                        type="number"
+                        step={ref.meta?.step ?? 1}
+                        min={ref.meta?.min}
+                        max={ref.meta?.max}
+                        value={current === undefined || current === null ? "" : String(current)}
+                        onChange={(e) => onEdit(key, e.target.value === "" ? ref.meta?.default ?? "" : Number(e.target.value))}
+                      />
+                    </div>
+                  );
+                }
+                if (ref.type === "string") {
+                  return (
+                    <div className="settings-field" key={field}>
+                      <span className="settings-label" title={ref.meta?.description ?? field}>{field}</span>
+                      <input
+                        className="settings-input"
+                        value={current === undefined || current === null ? "" : String(current)}
+                        placeholder={ref.meta?.default !== undefined ? String(ref.meta.default) : ""}
+                        onChange={(e) => onEdit(key, e.target.value)}
+                      />
+                    </div>
+                  );
+                }
+                // nested objects / arrays: read-only JSON view (v1)
+                return (
+                  <div className="settings-field" key={field}>
+                    <span className="settings-label">{field}</span>
+                    <pre className="settings-json">{JSON.stringify(current ?? null, null, 2)}</pre>
+                  </div>
+                );
+              })}
+            </div>
+            {data.writable && fields.length > 0 && (
+              <div className="settings-foot">
+                <button className="btn btn-primary" disabled={!dirty} onClick={() => onSave(ns.ns, patch, ns.revision)}>
+                  保存{dirty ? `（${Object.keys(patch).length} 项）` : ""}
+                </button>
+                <span className="muted tiny">rev {ns.revision}</span>
+              </div>
+            )}
+          </details>
+        );
+      })}
+      <div className="settings-ext-link">
+        <button className="link-btn" onClick={onOpenExtSettings}>
+          扩展自身设置（服务器地址 / 认证）→ VSCode 设置页
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Effective value: user override → live value → base → schema default. */
+function effectiveSetting(ns: SettingsNs, field: string, ref: any): unknown {
+  return ns.user?.[field] ?? ns.value?.[field] ?? ns.base?.[field] ?? ref?.meta?.default;
 }
 
 /** Right-side sheet (competitor panel interaction, probed from its CSS):

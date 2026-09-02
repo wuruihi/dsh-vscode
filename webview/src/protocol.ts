@@ -33,6 +33,19 @@ export interface ModelsData {
   failures: { id: string; name: string; message: string }[];
 }
 
+/** One settings namespace from settings/describe (schemastery serialization:
+ *  schema = {uid, refs:{[id]:{type,meta,...}}, dict:{[field]:refId}}). */
+export interface SettingsNs {
+  ns: string;
+  schema: any;
+  value: any;
+  base?: any;
+  user?: any;
+  applies: "live" | "restart";
+  secrets: { path: string[]; set: boolean }[];
+  revision: number;
+}
+
 export type PromptPart =
   | { type: "text"; text: string }
   | { type: "image"; mediaType: string; data: string; name?: string }
@@ -106,6 +119,9 @@ export type ExtToView =
   | { t: "jobs"; sessionId: string; jobs: { id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[] }
   | { t: "subagents"; sessionId: string; entries: { kind: string; id: string; mode: string; label: string; activity: string; hasChildren: boolean }[] }
   | { t: "subagent-history"; sessionId: string; entries: unknown[] }
+  /** settings/describe result (schema-driven server settings form). */
+  | { t: "settings-describe"; data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } }
+  | { t: "settings-saved"; ns: string; ok: boolean; error?: string }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
   /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
   | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
@@ -147,4 +163,6 @@ export type ViewToExt =
   | { t: "pick-folder"; reqId: number }
   | { t: "open-settings" }
   | { t: "list-subagents"; reqId: number; sessionId: string }
-  | { t: "subagent-history"; sessionId: string };
+  | { t: "subagent-history"; sessionId: string }
+  | { t: "get-settings" }
+  | { t: "save-setting"; ns: string; patch: Record<string, unknown>; revision: number };

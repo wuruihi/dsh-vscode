@@ -111,6 +111,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "subagent-history":
         void manager.subagentHistory(m.sessionId);
         break;
+      case "get-settings":
+        void manager.describeSettings();
+        break;
+      case "save-setting":
+        void manager.saveSetting(m.ns, m.patch, m.revision);
+        break;
       case "archive-session":
         void manager.archiveSession(m.sessionId);
         break;

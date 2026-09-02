@@ -643,6 +643,30 @@ export class SessionManager {
     }
   }
 
+  /** settings/describe for the schema-driven settings sheet. */
+  async describeSettings(): Promise<void> {
+    try {
+      const res = await this.lifecycle.client.call<{ writable: boolean; hasDocument: boolean; namespaces: unknown[] }>("settings.describe", {});
+      this.host.post({ t: "settings-describe", data: { writable: !!res?.writable, hasDocument: !!res?.hasDocument, namespaces: (res?.namespaces ?? []) as any } });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `服务器设置读取失败：${errText(err)}` });
+      this.host.post({ t: "settings-describe", data: { writable: false, hasDocument: false, namespaces: [] } });
+    }
+  }
+
+  /** settings/update with optimistic revision (probed wire: {ns, patch,
+   *  expectedRevision} → ok + refreshed namespace). */
+  async saveSetting(ns: string, patch: Record<string, unknown>, revision: number): Promise<void> {
+    try {
+      const res = await this.lifecycle.client.call<{ ok: boolean; error?: { message?: string } }>("settings.update", { ns, patch, expectedRevision: revision });
+      const ok = res?.ok !== false;
+      this.host.post({ t: "settings-saved", ns, ok, ...(ok ? {} : { error: String((res as any)?.error?.message ?? res?.error ?? "保存失败") }) });
+      if (ok) await this.describeSettings();
+    } catch (err) {
+      this.host.post({ t: "settings-saved", ns, ok: false, error: errText(err) });
+    }
+  }
+
   /** Withdraw every pending question/approval card from the webview and
    *  reset the generation-scoped bookkeeping. Called at each socket
    *  generation boundary — replays will re-add whatever is still live. */

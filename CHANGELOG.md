@@ -4,6 +4,20 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.14.0 — 运行中发送键变红色停止键 + v0.13.0 前七版本 git 入库
+
+- **停止按钮（用户需求）**：AI 执行期间（本会话 running），输入框右下角发送圆钮变为红色「停止」方块钮，点击即发 cancel 结束当前回合（与 Esc 同效），停止后输入框立即可发下一条；空闲时自动还原为发送键
+- **git 入库**：v0.6.0→v0.13.0 七个版本全部 commit（此前 25 文件未入库的资产风险清零；仅 commit 未 push）
+- **情报入账**：用户确认竞品 jager 0.12.89 在 alpha.5 部署上已死（面板空白、无会话列表）——竞品绑定旧协议无自适应层。对标阶段结束，后续按自身节奏演进
+
+## v0.15.0 — 设置面板：schema 驱动服务器设置表单（P1 主任务）
+
+- **新设置 Sheet（⚙ 按钮）**：右侧宽 Sheet 内直接查看/修改 DSH 服务器设置，不再跳 VSCode 设置页。数据源 settings/describe（实测 14 个命名空间，schemastery 序列化 schema）
+- **表单渲染**：每命名空间一张可折叠卡（名称 + 「即时生效/需重启」徽章 + 未保存计数）；字段按 schema 类型渲染——string/number/boolean 输入控件、const 只读、secret/credential-ref 只显「🔒已配置/🔓未配置」（凭据值永不下发到面板）、嵌套对象只读 JSON
+- **保存**：settings/update {ns, patch, expectedRevision}（乐观锁，竞品同款 wire；空 patch 探针实证写通道）；只传变更字段；保存成功自动刷新 describe（revision 递增）；失败红条报错
+- **数值链**：user 覆盖 → 实时值 → base → schema 默认；底部保留「扩展自身设置 → VSCode 设置页」入口
+- **验证**：compile/build 零错误；fold 9/9 + fence 8/8 + repair 14/14 + auth 真机全过；settings 写通道空 patch 探针 ok；vsix 280KB 已装机
+
 ## v0.13.0 — 历史正文丢失根因修复（chunkrow）+ 侧栏面板交互对齐竞品（右侧 Sheet）
 
 - **问题 1 根因（历史重放丢正文）**：实测当前会话 6678 条历史事件——实时流的 text-delta/reasoning-delta 在持久层被压缩为 `chunkrow/text-chunks` / `chunkrow/reasoning-chunks`（data.texts[] 数组），历史里 3474 条 assistant/chunk 仅含 block/tool-call/usage/finish 帧、**不含任何文本增量**。fold 未处理 chunkrow → 重载后全部正文/思考消失（最终「以上」回复缺失即此因）。修复：fold 新增两个 case，texts 按序拼接进 segments；fold-regress 补 chunkrow 形状断言（9/9）；新增 scripts/fold-live.cjs 真实会话回放诊断脚本
