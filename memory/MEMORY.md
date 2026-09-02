@@ -115,3 +115,8 @@
 - 竞品 jager 0.12.89 在 alpha.5 上确认死亡（用户实测空白/无列表）——对标期结束。它绑死旧协议无自适应层，Phase 0 双协议层是生死分界线
 - 设置 wire：settings/describe（14 命名空间，schemastery 序列化：schema.refs[id]{type,meta} + schema.dict{field→refId}）；settings/update {ns,patch,expectedRevision} 乐观锁；凭据走 credentials.set（面板只显状态不发值）。竞品 RPC 名提取法=从已装扩展 dist/extension.js grep 字符串
 - git 已入库至 v0.15.0（两次 commit，未 push）
+
+## v0.16.0：子代理追问/打断 + 通道纠偏（2026-09-02）
+
+- **subagent.* 在 alpha.5 客户端 Remote API 上不存在**（HTTP 404 / WS 流载体 invalid Remote endpoint）。子会话就是 session：history 走 session.history（我方 snapshot/page 适配）、追问走 session.prompt {sessionId:childId, mode:queue, content:[{type:text}]}、打断走 session.cancel {sessionId:childId}。竞品 RPC 名（rc.x 时代）只当线索不当事实
+- 零污染探针判读法：伪 id → session/not-found 业务错 = 参数 schema 合法；404/arguments-invalid = 通道本身不对

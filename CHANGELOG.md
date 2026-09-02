@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.17.0 — 工作区分组管理（P2 主任务收官）
+
+- **真数据源切换**：工作区 Sheet 从「按 cwd 假分组」升级为**服务器真实工作区**（workspace/follow 快照基线，实测拿到 D:\bywork 等真实分组与成员）；未收录进任何工作区的会话落入「未分组」
+- **分组管理五件套**：重命名（行内编辑，Enter 保存）/ 上移下移重排（workspace.insertBefore 锚点语义）/ 删除分组（两步确认；会话不删，归入未分组）/ ＋新建工作区（VSCode 目录选择器 → workspace.create）/ 会话移组（行内目标分组选择 → workspace.insertSessionBefore）
+- **通道事实**：workspace/list 无 HTTP 路由（读=流快照）；五个写端点全部在线（伪 id 探针 → arguments-invalid=端点存在仅 id 格式不过）——读走流、写走 HTTP 的混合模式与 subagent 相反，各自实证为准
+- **验证**：compile/build 零错误；fold 9/9 + fence 8/8 + repair 14/14；vsix 282KB 已装机
+
 ## v0.16.0 — 子代理面板：追问 + 打断（P2 主任务）
 
 - **交互**：子代理对话 Sheet 底部新增固定输入条（sticky）——输入消息回车/点发送即追问该子代理；子代理运行中（activity=active）时输入条左侧出现红色「打断」按钮；操作后自动刷新对话

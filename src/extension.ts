@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   status.show();
 
   // Wire webview -> manager.
-  panel.onMessage((m: ViewToExt) => {
+  panel.onMessage(async (m: ViewToExt) => {
     if (m.t === "ready") {
       panel.flushParked();
       void manager.onWebviewReady();
@@ -122,6 +122,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         break;
       case "save-setting":
         void manager.saveSetting(m.ns, m.patch, m.revision);
+        break;
+      case "list-workspaces":
+        void manager.listWorkspaces();
+        break;
+      case "workspace-rename":
+        void manager.workspaceRename(m.workspaceId, m.title);
+        break;
+      case "workspace-move":
+        void manager.workspaceMove(m.workspaceId, m.beforeWorkspaceId);
+        break;
+      case "workspace-delete":
+        void manager.workspaceDelete(m.workspaceId);
+        break;
+      case "workspace-add": {
+        const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectMany: false, openLabel: "添加为工作区" });
+        if (picked && picked.length > 0) void manager.workspaceCreate(picked[0].fsPath);
+        break;
+      }
+      case "workspace-move-session":
+        void manager.workspaceMoveSession(m.sessionId, m.toWorkspaceId);
         break;
       case "archive-session":
         void manager.archiveSession(m.sessionId);

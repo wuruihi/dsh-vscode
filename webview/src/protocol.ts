@@ -46,6 +46,16 @@ export interface SettingsNs {
   revision: number;
 }
 
+/** Server workspace record (workspace/follow baseline item). */
+export interface WorkspaceView {
+  workspaceId: string;
+  path: string;
+  title: string;
+  sessionIds: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type PromptPart =
   | { type: "text"; text: string }
   | { type: "image"; mediaType: string; data: string; name?: string }
@@ -122,6 +132,8 @@ export type ExtToView =
   /** settings/describe result (schema-driven server settings form). */
   | { t: "settings-describe"; data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } }
   | { t: "settings-saved"; ns: string; ok: boolean; error?: string }
+  /** workspace.list (via follow baseline) + archived session ids. */
+  | { t: "workspaces"; items: WorkspaceView[]; archivedSessionIds: string[] }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
   /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
   | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
@@ -167,4 +179,10 @@ export type ViewToExt =
   | { t: "subagent-prompt"; childId: string; text: string }
   | { t: "subagent-interrupt"; childId: string }
   | { t: "get-settings" }
-  | { t: "save-setting"; ns: string; patch: Record<string, unknown>; revision: number };
+  | { t: "save-setting"; ns: string; patch: Record<string, unknown>; revision: number }
+  | { t: "list-workspaces" }
+  | { t: "workspace-rename"; workspaceId: string; title: string }
+  | { t: "workspace-move"; workspaceId: string; beforeWorkspaceId?: string }
+  | { t: "workspace-delete"; workspaceId: string }
+  | { t: "workspace-add" }
+  | { t: "workspace-move-session"; sessionId: string; toWorkspaceId: string };

@@ -13,6 +13,7 @@ import type {
   SessionItem,
   SettingsNs,
   ViewToExt,
+  WorkspaceView,
 } from "./protocol.js";
 import { ConversationFold, stripSystemContext, type FoldImage, type FoldItem, type ToolActivity, type TurnItem } from "./fold.js";
 
@@ -103,6 +104,12 @@ export function App() {
   const [settingsData, setSettingsData] = useState<{ writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null>(null);
   const [settingsEdits, setSettingsEdits] = useState<Record<string, unknown>>({});
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  // workspace sheet: real server workspaces + management state
+  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  const [wsArchived, setWsArchived] = useState<Set<string>>(new Set());
+  const [wsRenaming, setWsRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [wsDelConfirm, setWsDelConfirm] = useState<string | null>(null);
+  const [wsMoveFor, setWsMoveFor] = useState<string | null>(null);
   const [wsQuery, setWsQuery] = useState("");
   const [trajFilter, setTrajFilter] = useState("");
   const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
@@ -265,6 +272,10 @@ export function App() {
           break;
         case "subagent-history":
           setSubEvents(m.entries as any);
+          break;
+        case "workspaces":
+          setWorkspaces((m.items ?? []) as any);
+          setWsArchived(new Set(m.archivedSessionIds ?? []));
           break;
         case "settings-describe":
           setSettingsData(m.data);
@@ -516,8 +527,12 @@ export function App() {
           <span className="spacer" />
           <button
             className={`icon-btn${drawer === "workspace" ? " is-on" : ""}`}
-            title="工作区：按目录分组 / 搜索 / 归档"
-            onClick={() => setDrawer((d) => (d === "workspace" ? "" : "workspace"))}
+            title="工作区：分组 / 重排 / 归档 / 移组"
+            onClick={() => {
+              const opening = drawer !== "workspace";
+              setDrawer((d) => (d === "workspace" ? "" : "workspace"));
+              if (opening) post({ t: "list-workspaces" });
+            }}
           >
             <Icon name="folder" size={13} />
           </button>
@@ -635,65 +650,159 @@ export function App() {
         </Sheet>
       )}
 
-      {/* workspace sheet — sessions grouped by folder + title search */}
+      {/* workspace sheet — REAL server workspaces (rename/move/delete/add,
+          session archive + move between groups) + ungrouped fallback */}
       {drawer === "workspace" && (
         <Sheet
           title="📁 工作区"
           onClose={() => setDrawer("")}
           headControls={
-            <input
-              className="drawer-search sheet-search"
-              placeholder="搜索会话标题…"
-              value={wsQuery}
-              onChange={(e) => setWsQuery(e.target.value)}
-            />
+            <>
+              <input
+                className="drawer-search sheet-search"
+                placeholder="搜索会话标题…"
+                value={wsQuery}
+                onChange={(e) => setWsQuery(e.target.value)}
+              />
+              <button className="link-btn" title="选择一个文件夹注册为工作区" onClick={() => post({ t: "workspace-add" })}>
+                ＋ 工作区
+              </button>
+            </>
           }
         >
           {(() => {
             const q = wsQuery.trim().toLowerCase();
-            const rows = q ? sessions.filter((s) => (s.title ?? "").toLowerCase().includes(q)) : sessions;
-            const groups = new Map<string, typeof rows>();
-            for (const s of rows) {
-              const root = (s.cwd ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "未分组";
-              if (!groups.has(root)) groups.set(root, []);
-              groups.get(root)!.push(s);
-            }
-            if (rows.length === 0) return <div className="muted pad">没有匹配的会话</div>;
-            return [...groups.entries()].map(([root, items]) => (
-              <div key={root} className="ws-group">
-                <div className="ws-group-title">📁 {root} <span className="muted">({items.length})</span></div>
-                {items.map((s) => (
-                  <div
-                    key={s.sessionId}
-                    className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
-                    title={s.cwd ?? s.sessionId}
-                    onClick={() => {
-                      setDrawer("");
-                      setUnread((u) => {
-                        if (!u.has(s.sessionId)) return u;
-                        const n = new Set(u);
-                        n.delete(s.sessionId);
-                        return n;
-                      });
-                      post({ t: "switch", sessionId: s.sessionId });
+            const match = (s: SessionItem) => !q || (s.title ?? "").toLowerCase().includes(q);
+            const openSession = (sessionId: string) => {
+              setDrawer("");
+              setUnread((u) => {
+                if (!u.has(sessionId)) return u;
+                const n = new Set(u);
+                n.delete(sessionId);
+                return n;
+              });
+              post({ t: "switch", sessionId });
+            };
+            const sessionRow = (s: SessionItem, groupId?: string) => {
+              if (wsMoveFor === s.sessionId) {
+                return (
+                  <div key={s.sessionId} className="session-row ws-move-row">
+                    <span className="muted tiny">移到分组：</span>
+                    {workspaces
+                      .filter((w) => w.workspaceId !== groupId)
+                      .map((w) => (
+                        <button
+                          key={w.workspaceId}
+                          className="link-btn"
+                          onClick={() => {
+                            post({ t: "workspace-move-session", sessionId: s.sessionId, toWorkspaceId: w.workspaceId });
+                            setWsMoveFor(null);
+                          }}
+                        >
+                          {w.title}
+                        </button>
+                      ))}
+                    <button className="link-btn" onClick={() => setWsMoveFor(null)}>取消</button>
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={s.sessionId}
+                  className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
+                  title={s.cwd ?? s.sessionId}
+                  onClick={() => openSession(s.sessionId)}
+                >
+                  <span className={`dot dot-${s.running ? "running" : "idle"}`} />
+                  <span className="session-title">{s.title ?? "（未命名会话）"}</span>
+                  <button
+                    className="icon-btn mini"
+                    title="移到其他工作区分组"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setWsMoveFor(s.sessionId);
                     }}
                   >
-                    <span className={`dot dot-${s.running ? "running" : "idle"}`} />
-                    <span className="session-title">{s.title ?? "（未命名会话）"}</span>
-                    <button
-                      className="icon-btn mini"
-                      title="归档（从列表隐藏，可在 DSH 网页版找回）"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        post({ t: "archive-session", sessionId: s.sessionId });
-                      }}
-                    >
-                      <Icon name="trash" size={12} />
-                    </button>
+                    <Icon name="box" size={12} />
+                  </button>
+                  <button
+                    className="icon-btn mini"
+                    title="归档（从列表隐藏，可在 DSH 网页版找回）"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      post({ t: "archive-session", sessionId: s.sessionId });
+                    }}
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              );
+            };
+            const byId = new Map(sessions.map((s) => [s.sessionId, s]));
+            const grouped = new Set(workspaces.flatMap((w) => w.sessionIds ?? []));
+            const ungrouped = sessions.filter((s) => !grouped.has(s.sessionId) && !wsArchived.has(s.sessionId) && match(s));
+
+            return (
+              <>
+                {workspaces.map((w, i) => {
+                  const rows = (w.sessionIds ?? [])
+                    .filter((sid) => byId.has(sid) && !wsArchived.has(sid) && match(byId.get(sid)!))
+                    .map((sid) => byId.get(sid)!);
+                  return (
+                    <div key={w.workspaceId} className="ws-group">
+                      <div className="ws-group-title" title={w.path}>
+                        {wsRenaming?.id === w.workspaceId ? (
+                          <input
+                            autoFocus
+                            className="settings-input"
+                            value={wsRenaming.title}
+                            onChange={(e) => setWsRenaming({ id: w.workspaceId, title: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && wsRenaming.title.trim()) {
+                                post({ t: "workspace-rename", workspaceId: w.workspaceId, title: wsRenaming.title.trim() });
+                                setWsRenaming(null);
+                              } else if (e.key === "Escape") setWsRenaming(null);
+                            }}
+                            onBlur={() => setWsRenaming(null)}
+                          />
+                        ) : (
+                          <>
+                            📁 {w.title} <span className="muted">({rows.length})</span>
+                            <button className="icon-btn mini" title="重命名" onClick={() => setWsRenaming({ id: w.workspaceId, title: w.title })}>
+                              <Icon name="edit" size={11} />
+                            </button>
+                            <button className="icon-btn mini" title="上移" disabled={i === 0} onClick={() => post({ t: "workspace-move", workspaceId: w.workspaceId, beforeWorkspaceId: workspaces[i - 1]?.workspaceId })}>
+                              <Icon name="up" size={11} />
+                            </button>
+                            <button className="icon-btn mini" title="下移" disabled={i === workspaces.length - 1} onClick={() => post({ t: "workspace-move", workspaceId: workspaces[i + 1]?.workspaceId, beforeWorkspaceId: w.workspaceId })}>
+                              <Icon name="down" size={11} />
+                            </button>
+                            {wsDelConfirm === w.workspaceId ? (
+                              <span>
+                                <button className="link-btn" onClick={() => { post({ t: "workspace-delete", workspaceId: w.workspaceId }); setWsDelConfirm(null); }}>确认删除</button>
+                                <button className="link-btn" onClick={() => setWsDelConfirm(null)}>取消</button>
+                              </span>
+                            ) : (
+                              <button className="icon-btn mini" title="删除分组（会话不删除，归入未分组）" onClick={() => setWsDelConfirm(w.workspaceId)}>
+                                <Icon name="trash" size={11} />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {rows.map((s) => sessionRow(s, w.workspaceId))}
+                    </div>
+                  );
+                })}
+                {ungrouped.length > 0 && (
+                  <div className="ws-group">
+                    <div className="ws-group-title">📄 未分组 <span className="muted">({ungrouped.length})</span></div>
+                    {ungrouped.map((s) => sessionRow(s))}
                   </div>
-                ))}
-              </div>
-            ));
+                )}
+                {workspaces.length === 0 && ungrouped.length === 0 && <div className="muted pad">没有匹配的会话</div>}
+              </>
+            );
           })()}
         </Sheet>
       )}

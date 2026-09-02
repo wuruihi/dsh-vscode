@@ -671,6 +671,50 @@ export class SessionManager {
     }
   }
 
+  /** workspace.list → follow-baseline adapter (read path; workspace/list has
+   *  no HTTP route on alpha.5 — mutations DO: probed arguments-invalid on
+   *  fake ids = endpoints exist, schema-checked). */
+  async listWorkspaces(): Promise<void> {
+    try {
+      const res = await this.lifecycle.client.call<{ items?: unknown[]; archivedSessionIds?: string[] }>("workspace.list", {});
+      this.host.post({ t: "workspaces", items: (res?.items ?? []) as any, archivedSessionIds: res?.archivedSessionIds ?? [] });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `工作区列表读取失败：${errText(err)}` });
+      this.host.post({ t: "workspaces", items: [], archivedSessionIds: [] });
+    }
+  }
+
+  /** All workspace mutations refresh the list afterwards (single code path). */
+  private async workspaceOp(label: string, method: string, args: Record<string, unknown>): Promise<void> {
+    try {
+      await this.lifecycle.client.call(method, args);
+      this.host.post({ t: "notify", kind: "info", message: `${label}完成` });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `${label}失败：${errText(err)}` });
+    }
+    await this.listWorkspaces();
+  }
+
+  workspaceRename(workspaceId: string, title: string) {
+    return this.workspaceOp("工作区重命名", "workspace.rename", { workspaceId, title });
+  }
+
+  workspaceMove(workspaceId: string, beforeWorkspaceId?: string) {
+    return this.workspaceOp("工作区移动", "workspace.insertBefore", { workspaceId, ...(beforeWorkspaceId ? { beforeWorkspaceId } : {}) });
+  }
+
+  workspaceDelete(workspaceId: string) {
+    return this.workspaceOp("工作区删除", "workspace.delete", { workspaceId });
+  }
+
+  workspaceCreate(path: string) {
+    return this.workspaceOp("工作区添加", "workspace.create", { path });
+  }
+
+  workspaceMoveSession(sessionId: string, toWorkspaceId: string) {
+    return this.workspaceOp("会话移组", "workspace.insertSessionBefore", { workspaceId: toWorkspaceId, sessionId });
+  }
+
   /** settings/describe for the schema-driven settings sheet. */
   async describeSettings(): Promise<void> {
     try {
