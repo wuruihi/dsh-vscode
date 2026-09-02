@@ -69,6 +69,12 @@ export class EventStreams {
     if (!this.stopped) this.connect();
   }
 
+  /** Legacy mux broadcasts every session: no per-session subscription, this
+   *  exists so lifecycle can call one interface regardless of flavor. */
+  follow(_sessionId: string | undefined): void {
+    /* no-op */
+  }
+
   private closeSockets(reason: string): void {
     for (const ws of [this.mux, this.host]) {
       if (ws) {

@@ -50,6 +50,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   panel.post({ t: "conn", state: "connecting" });
   lifecycle.events.onState((s) => panel.post({ t: "conn", state: s, baseUrl }));
+  // Connection problems that need the user's eyes (v012 auth, unknown protocol).
+  lifecycle.events.onProblem((message) => {
+    panel.post({ t: "notify", kind: "warn", message });
+    void vscode.window.showWarningMessage(message);
+  });
   status.text = statusText.connecting;
   status.show();
 
@@ -79,6 +84,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "fork-session":
         void manager.forkSession(m.sessionId);
         break;
+      case "fork-at":
+        void manager.forkSessionAt(m.sessionId, m.atSeq);
+        break;
+      case "open-file":
+        void openFileInEditor(m.path);
+        break;
+      case "open-browser":
+        void vscode.env.openExternal(vscode.Uri.parse(baseUrl));
+        break;
+      case "feedback":
+        log(`[feedback] ${m.sessionId} ${m.kind}${m.comment ? `: ${m.comment}` : ""}`);
+        break;
+      case "pick-file":
+        void pickPaths({ canSelectMany: true, openLabel: "添加文件" }).then((items) => panel.post({ t: "picked", reqId: m.reqId, items }));
+        break;
+      case "pick-folder":
+        void pickPaths({ canSelectFolders: true, canSelectMany: true, openLabel: "添加文件夹" }).then((items) => panel.post({ t: "picked", reqId: m.reqId, items }));
+        break;
+      case "open-settings":
+        void vscode.commands.executeCommand("workbench.action.openSettings", "@ext:wurui.dsh-web-vscode");
+        break;
+      case "list-subagents":
+        void manager.listSubagents(m.sessionId);
+        break;
+      case "subagent-history":
+        void manager.subagentHistory(m.sessionId);
+        break;
       case "archive-session":
         void manager.archiveSession(m.sessionId);
         break;
@@ -102,6 +134,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         break;
       case "queue-remove":
         void manager.queueRemove(m.sessionId, m.itemId);
+        break;
+      case "queue-edit":
+        void manager.queueEdit(m.sessionId, m.itemId, m.text);
+        break;
+      case "queue-steer":
+        void manager.queueSteer(m.sessionId, m.itemId);
         break;
       case "load-older":
         void manager.loadOlder(m.sessionId, m.beforeSeq);
@@ -155,4 +193,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
   /* disposal via context.subscriptions */
+}
+
+/** Open a produced file in the editor (files-card click). Relative paths
+ *  resolve against the first workspace folder. */
+async function openFileInEditor(path: string): Promise<void> {
+  try {
+    const { Uri, workspace, window } = vscode;
+    const isAbs = /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/") || path.startsWith("\\\\");
+    let uri = Uri.file(path);
+    if (!isAbs) {
+      const root = workspace.workspaceFolders?.[0]?.uri;
+      if (!root) return;
+      uri = Uri.joinPath(root, path);
+    }
+    const doc = await workspace.openTextDocument(uri);
+    await window.showTextDocument(doc, { preview: true });
+  } catch (err) {
+    void vscode.window.showWarningMessage(`DSH: 无法打开文件 ${path}（${String(err).slice(0, 80)}）`);
+  }
+}
+
+/** Native file/folder picker for the composer ＋ menu; returns {path, rel}
+ *  pairs (rel = workspace-root-relative when possible). */
+async function pickPaths(opts: { canSelectMany?: boolean; canSelectFolders?: boolean; openLabel: string }): Promise<{ path: string; rel: string }[]> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: !opts.canSelectFolders,
+    canSelectFolders: opts.canSelectFolders ?? false,
+    canSelectMany: opts.canSelectMany ?? false,
+    openLabel: opts.openLabel,
+    defaultUri: root ? vscode.Uri.file(root) : undefined,
+  });
+  return (picked ?? []).map((uri) => ({
+    path: uri.fsPath,
+    rel: root && uri.fsPath.toLowerCase().startsWith(root.toLowerCase())
+      ? uri.fsPath.slice(root.length).replace(/^[\\/]+/, "")
+      : uri.fsPath.split(/[\\/]/).pop() ?? uri.fsPath,
+  }));
 }

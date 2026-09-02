@@ -5,9 +5,10 @@ DSH（DeepSeek Harness）的 VSCode 客户端插件。协议客户端 + IDE 上�
 ## 项目定位与边界
 
 - **连接路线（已定）**：直连常驻 `dsh web`（127.0.0.1:3080），不 spawn 独立实例，不做 broker。没起则提示 + 一键拉起（Start-Process 脱离方式）。
+- **协议双 flavor（2026-09-02 定）**：同时兼容 0.1.1-rc.x（legacy 点式端点/双WS/respond）与 0.1.2+（v012 斜杠端点/单WS remote.mux/token换cookie），连接时探测自动切换，未知形态出横幅不静默死。用户**持续升级 DSH 到最新版**——每次升级后跑 `pnpm smoke` 确认适配。契约详见 docs/design.md §3.0。
 - **会话共享**：与 DSH GUI 同一实例同一存储，会话/插件生态全共享。
 - **分发**：仅本地 vsix，不发布 Marketplace（发布是红线，需用户另行确认）。
-- 架构设计见 `docs/design.md`（唯一权威，改架构先改它）。
+- 架构设计见 `docs/design.md`（唯一权威，改架构先改它）；改造路线见 `docs/roadmap.md`；竞品分析见 `docs/competitor-analysis.md`。
 
 ## 目录约定
 
@@ -59,4 +60,4 @@ pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web �
 
 ---
 
-最后更新: 2026-08-17（项目初始化时建立）
+最后更新: 2026-09-02（协议双 flavor 策略修订 + 路线图文档化）

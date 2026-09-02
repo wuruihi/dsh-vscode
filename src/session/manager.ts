@@ -224,6 +224,10 @@ export class SessionManager {
 
   private async adoptSession(sessionId: string): Promise<void> {
     this.currentSession = sessionId;
+    // v012 follow must open BEFORE the history snapshot: events racing the
+    // snapshot are de-duplicated webview-side by seq (fold), but events
+    // between a snapshot and a later follow-open would be lost forever.
+    this.lifecycle.followSession(sessionId);
     this.host.post({ t: "sessions", items: this.visibleItems(), current: sessionId });
     await Promise.all([this.loadHistory(sessionId), this.refreshModels(sessionId)]);
     this.postPermissionOf(sessionId);
@@ -287,6 +291,7 @@ export class SessionManager {
       const pv = (p?.values ?? p ?? {}) as Record<string, any>;
       this.host.post({ t: "projection", sessionId, key: "plan", value: pv.plan ?? { active: false } });
       this.host.post({ t: "projection", sessionId, key: "todos", value: pv.todos ?? null });
+      this.host.post({ t: "projection", sessionId, key: "goal", value: pv.goal ?? null });
     } catch (err) {
       warn(`[manager] history failed: ${String(err)}`);
       this.host.post({ t: "history", sessionId, entries: [], hasMore: false });
@@ -294,9 +299,22 @@ export class SessionManager {
   }
 
   async forkSession(sessionId: string): Promise<void> {
+    await this.forkSessionInternal(sessionId);
+  }
+
+  /** Fork at a specific point (turn pill / action bar): the new session
+   *  copies everything through atSeq. */
+  async forkSessionAt(sessionId: string, atSeq: number): Promise<void> {
+    await this.forkSessionInternal(sessionId, atSeq);
+  }
+
+  private async forkSessionInternal(sessionId: string, atSeq?: number): Promise<void> {
     try {
-      const child = await this.lifecycle.client.call<{ sessionId: string }>("session.fork", { sessionId });
-      this.host.post({ t: "notify", kind: "info", message: "已分叉出新会话" });
+      const child = await this.lifecycle.client.call<{ sessionId: string }>("session.fork", {
+        sessionId,
+        ...(atSeq !== undefined ? { atSeq } : {}),
+      });
+      this.host.post({ t: "notify", kind: "info", message: atSeq !== undefined ? `已从第 ${atSeq} 号事件处分叉出新会话` : "已分叉出新会话" });
       await this.refreshSessions();
       await this.adoptSession(child.sessionId);
     } catch (err) {
@@ -578,6 +596,53 @@ export class SessionManager {
     }
   }
 
+  /** Replace a pending queued item's text (server action kind:"edit"). */
+  async queueEdit(sessionId: string, itemId: string, text: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("session.updateQueue", {
+        sessionId,
+        itemId,
+        action: { kind: "edit", content: [{ type: "text", text }] },
+      });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `编辑队列项失败：${errText(err)}` });
+    }
+  }
+
+  /** Promote a queued item to a steering message (server action kind:"steer") —
+   *  it jumps the queue and takes effect on the running turn. */
+  async queueSteer(sessionId: string, itemId: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("session.updateQueue", { sessionId, itemId, action: { kind: "steer" } });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `插队失败：${errText(err)}` });
+    }
+  }
+
+  /** List a session's subagents (rc.2 subagent.list / 0.1.2 subagents/list). */
+  async listSubagents(sessionId: string): Promise<void> {
+    try {
+      const res = await this.lifecycle.client.call<{ entries: unknown[] }>("subagent.list", { parentSessionId: sessionId });
+      this.host.post({ t: "subagents", sessionId, entries: (Array.isArray(res?.entries) ? res.entries : []) as any });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `子代理列表获取失败：${errText(err)}` });
+      this.host.post({ t: "subagents", sessionId, entries: [] });
+    }
+  }
+
+  /** Read-only transcript of a child (subagent) session, rendered in the
+   *  subagents side sheet. Same session.history the main view loads, just
+   *  pointed at the child id. */
+  async subagentHistory(childId: string): Promise<void> {
+    try {
+      const h = await this.lifecycle.client.call<{ events: unknown[] }>("session.history", { sessionId: childId, maxMessages: 400 });
+      this.host.post({ t: "subagent-history", sessionId: childId, entries: (h?.events ?? []) as any });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `子代理对话读取失败：${errText(err)}` });
+      this.host.post({ t: "subagent-history", sessionId: childId, entries: [] });
+    }
+  }
+
   /** Withdraw every pending question/approval card from the webview and
    *  reset the generation-scoped bookkeeping. Called at each socket
    *  generation boundary — replays will re-add whatever is still live. */
@@ -654,6 +719,13 @@ export class SessionManager {
       return;
     }
     if (type === "session/subscribed") return; // baseline bookkeeping only
+    if (type === "session/jobs" || type === "jobs") {
+      // Background-job ledger frames (bash/pwsh/subagent jobs started by the
+      // agent). Current-session only — same rule as other panel state.
+      if (payload.sessionId && payload.sessionId !== this.currentSession) return;
+      this.host.post({ t: "jobs", sessionId: payload.sessionId ?? this.currentSession, jobs: Array.isArray(payload.jobs) ? payload.jobs : [] });
+      return;
+    }
     if (type === "session/projection") {
       const sid = payload.sessionId;
       // Panel state (todos/plan/tokens/permissions) is current-session only.
@@ -860,9 +932,20 @@ async function expandFileParts(parts: unknown[]): Promise<unknown[]> {
     }
     const path = String((p as any).path ?? "");
     const rel = String((p as any).rel ?? path);
+    const fsp = await import("node:fs/promises");
     try {
-      const { readFile } = await import("node:fs/promises");
-      let text = await readFile(path, "utf8");
+      const st = await fsp.stat(path);
+      if (st.isDirectory()) {
+        // Directory reference: shallow listing (names only, one level).
+        const names = await fsp.readdir(path);
+        const listing = names.slice(0, 200).join("\n");
+        out.push({
+          type: "text",
+          text: `[引用目录 ${rel} 共 ${names.length} 项]\n${listing}${names.length > 200 ? "\n…（仅列前 200 项）" : ""}`,
+        });
+        continue;
+      }
+      let text = await fsp.readFile(path, "utf8");
       if (text.length > FILE_PART_MAX_CHARS) {
         text = `${text.slice(0, FILE_PART_MAX_CHARS)}\n…（已截断至 ${FILE_PART_MAX_CHARS} 字符）`;
       }

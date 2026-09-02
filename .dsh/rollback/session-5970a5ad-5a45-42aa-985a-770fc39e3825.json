@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "sessionId": "session-5970a5ad-5a45-42aa-985a-770fc39e3825",
+  "cwd": "D:\\repos\\dsh-vscode",
+  "checkpoints": [
+    {
+      "turn": 1,
+      "commit": "29cde345d61f4483a4a99b36050a8def7730e938",
+      "parent": "19f3ae03fe02dcb67fc24e043c22139c8d388b1a",
+      "time": 1788321025728,
+      "untracked": [
+        "docs/competitor-analysis.md",
+        "docs/roadmap.md",
+        "src/connection/auth.ts",
+        "src/connection/protocol.ts",
+        "src/connection/remote.ts"
+      ],
+      "truncated": false
+    }
+  ],
+  "rolls": [],
+  "updatedAt": 1788321027670
+}

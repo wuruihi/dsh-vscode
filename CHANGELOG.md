@@ -4,6 +4,80 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.13.0 — 历史正文丢失根因修复（chunkrow）+ 侧栏面板交互对齐竞品（右侧 Sheet）
+
+- **问题 1 根因（历史重放丢正文）**：实测当前会话 6678 条历史事件——实时流的 text-delta/reasoning-delta 在持久层被压缩为 `chunkrow/text-chunks` / `chunkrow/reasoning-chunks`（data.texts[] 数组），历史里 3474 条 assistant/chunk 仅含 block/tool-call/usage/finish 帧、**不含任何文本增量**。fold 未处理 chunkrow → 重载后全部正文/思考消失（最终「以上」回复缺失即此因）。修复：fold 新增两个 case，texts 按序拼接进 segments；fold-regress 补 chunkrow 形状断言（9/9）；新增 scripts/fold-live.cjs 真实会话回放诊断脚本
+- **问题 2（面板交互对齐）**：竞品源码实证（panels.ts + chat.css）：会话名下方工具钮点击 → **固定遮罩 + 右侧 Sheet**（400px/宽 620px，0.16s 滑入，Esc/点遮罩关闭，头部标题+控件+关闭钮）。我方五个抽屉（会话/工作区/任务/轨迹/子代理）全部重构为该交互
+- **面板功能加深**：任务行加时钟+时长+detail 双行展示；轨迹表加时间列+回合分隔线（━ 回合 N ━）；子代理目录行**可点击打开只读对话**（新协议 subagent-history：manager 调 session.history 指向子会话 id，webview 用同一 fold 管线渲染，宽 Sheet 内返回目录）
+- **明确未做（与竞品的剩余差距，待续）**：设置面板完整表单（竞品为 schema 驱动+模型供应商目录+发现模型+预设管理，我方仍跳 VSCode 设置页）；会话全文搜索（该部署 session.search 索引关闭）；子代理追问/打断（需 steer/interrupt 接线）；工作区分组管理（重排/归档分组）
+- **验证**：compile/build 零错误；fold 9/9 + fence 8/8 + repair 14/14 + auth（真实服务器）全过；vsix 277KB 已装机
+
+## v0.12.0 — 免 token 直连（credentials 铸 cookie，零配置 + 重启免疫）
+
+- **问题**：alpha.5 起鉴权强制，启动 token 每次随机打印不落盘——用户（非技术背景）无从获取，服务器每次重启都断连。上一版的 authToken 手填方案对这类用户不可行
+- **解法（线协议逆向）**：定位 dsh-client-connection 源码——服务器把 32 字节签名 secret 持久化在 `~/.dsh/.credentials.yaml` 的 `client-connection/browser-session` 记录里，且**跨重启复用**。cookie 格式完整复刻：名 `dsh-auth-`+base64url(sha256(authority))，值 `v1.`+base64url(payload)`.`+HMAC-SHA256 签名，payload={version:1,authority,issuedAt,expiresAt}（寿命 7 天 ≤ 服务端 30 天上限）。插件本地铸 cookie，**从此不需要 token**
+- **auth.ts 发现链重排**：authToken 设置（显式意图优先）→ **credentials 铸造（新主力路径，零配置）** → 自有启动日志 → ~/.dsh 日志兜底；每级失败自动落下一级；401 时 invalidate 重铸（时间戳全新，天然免疫过期）
+- **新增 src/connection/browser-auth.ts**：纯 node 模块（无 vscode 依赖，可独立回归）——readBrowserSecret/mintBrowserCookie/authorityOf/mintFromCredentialsFile
+- **新增 scripts/auth-regress.cjs（真实服务器集成回归）**：真铸 cookie 打 3080 session/list（实测 200/211 会话）+ 篡改 secret 必须 401（证明服务器确在验签而非裸奔）
+- **信任模型说明**：credentials 文件仅本用户可读，读它铸 cookie 与「从终端回滚里抄 token」同级信任，不构成越权
+- **验证**：compile/build 零错误；auth-regress 3/3（真实服务器）+ fold 9/9 + fence 8/8 + repair 14/14；vsix 275KB 已装机。用户侧效果：**Reload 后会话列表自动恢复，什么都不用填，服务器重启也不断**
+
+## v0.11.0 — 消息顺序/转圈根因修复 + 0.1.2-alpha.5 兼容性体检
+
+- **兼容性体检（用户 DSH 升级 alpha.5 后）**：隔离实例（deepseek-harness 检出同版本）全套 smoke **12/12 通过**——探测/鉴权/remote.mux/$events/session 全链路/模型目录。Phase 0 双协议层兑现「持续升级不返工」的设计目标。结论：**插件在 alpha.5 上可用**，唯一变化：alpha.5 强制鉴权且 token 每次启动随机打印、不落盘 → 磁盘发现链失效，**authToken 设置成为主通道**（横幅文案已更新说明）
+- **工具卡永久转圈（根因修复）**：实测线协议（rc.2 真实历史捕获）：tool/result 的 callId 埋在 `data.message.source.callId` / `data.message.content[0].toolCallId`，结果文本在 `content[0].content[0].text`——fold 原先只读顶层 `data.callId`（恒为空），finishTool 永远匹配不到。修复：resultCallId 三级宽松取值 + 嵌套 preview 提取 + finishTool 跨回合回溯兜底（结果落在 turn/end 之后的边缘乱序也能落定）
+- **消息交错顺序（架构修复）**：TurnItem 新增 `segments` 交错序列（text/thinking/tool 按真实到达顺序），渲染以 segments 为唯一事实源——「一句话→read→思考→一句话→edit→pwsh」与 GUI/竞品同序呈现；text/thinking/activities 保留为同步平面视图（复制/统计零改动）；旧数据走 fallback 拼接
+- **step 持久事件 + 工具图标**：step/start|end（真实历史里是 persistent 事件，原先被忽略）映射为步骤卡；工具行按名称映射线条图标（read→eye edit→edit grep→search pwsh→ledger web→globe 子代理→box），label 去 emoji 前缀改等宽字体，卡片独立缩进 14px
+- **新增回归 scripts/fold-regress.cjs**：以实测线形状为 fixture（嵌套 callId/嵌套文本/交错块/step 事件/legacy 顶层数形状），9/9 通过——此前无任何 fold 层回归，这次的形状断言永久化
+- **验证**：compile/build 零错误；fold-regress 9/9 + fence 8/8 + repair 14/14（护城河零改动）+ alpha.5 smoke 12/12 + rc.2 smoke 11/11；vsix 273.6KB 已装机
+
+## v0.10.0 — 面板工具面补齐（用户面板对比反馈）
+
+- **头部功能行五钮**（会话行下、工具行内，drawer 机制统一开合）：
+  - 📁 **工作区**：会话按目录分组 + 标题搜索 + 每行归档；归档区展示诚实跳过（rc.2 session.list 不下发 archived 标记）
+  - 📒 **后台任务**：session/jobs 事件帧驱动的任务台账（状态五色点 running/stopping/completed/killed/failed），零新增 RPC——mux 全帧本就在收，manager 补转发；终止仍由 agent job_kill 完成（与网页端同款约束）
+  - 🧭 **轨迹**：事件台账视图——history+实时帧留存 rawEvents（cap 800），类型筛选 + 点击展开完整 JSON，协议调试利器
+  - 📦 **子代理目录**：subagent.list（rc.2 点式）/ subagents/list（0.1.2 request 包裹）双 flavor 路由，实测返回 {entries:[{id,mode,label,activity,hasChildren}]}
+  - ⚙️ **设置**：打开 VSCode 扩展设置页（MVP；面板内完整设置表单=竞品 settings/describe 体系，按需后置）
+- **输入框 ＋ 添加菜单**：文件/文件夹/图片三入口——原生 picker（宿主 pickPaths，rel 相对工作区根）→ file chips；文件夹引用宿主展开为浅层目录清单（[引用目录 … 共 N 项]）；图片走既有 base64 通道
+- **/ 命令按钮**：slash 功能此前只有键入 / 触发（不可发现）——现工具行常驻按钮，一键弹出命令+技能列表（同管道同缓存）
+- **底部统计中文化**：out/in/cache → 输出/输入/缓存命中
+- **验证**：compile/build 零错误；fence 8/8 + repair 14/14；legacy smoke 11/11；rc.2 实测 subagent.list/settings.describe/session.search 支持面（search 因部署索引关闭不可用→改客户端过滤）；vsix 272.3KB 已装机
+
+## v0.9.0 — Phase 2 次批：goal 进度卡 + 队列编辑/插队
+
+- **goal 进度卡（双 flavor，协议无关）**：goal 走 `session/projection`（key="goal"），manager 全键转发本就生效——本轮补齐消费端。投影形状实线捕获（本会话目标直读）：`{goal:{id,revision,objective,phase,maxGoalRounds,blockedReason?},roundsStarted}`；phase ∈ active|complete|paused|blocked（GUI dsh-client-ui-goal 源码证实，blocked 显示 blockedReason.message）；历史切换时从 session.list 投影种子恢复。头部下方 dock 药丸条：◎ 目标文本（截断+title 全文）+ 阶段徽标 + 轮次 x/max；四态配色（进行中 accent / 完成绿 / 暂停灰 / 受阻橙）
+- **队列编辑与插队（updateQueue 动作全集 edit|remove|steer）**：动作集从 alpha.4 typert.host.js schema 逐字提取；rc.2 支持面用零污染探测法证实（伪 sessionId 三动作全过 schema 到 queue-item-not-found）；队列 chip 新增 ✎ 编辑（内联 textarea，Ctrl+Enter 保存 / Esc 取消）与 ↺ 插队（steer：转为引导消息立即影响当前轮）；steering 项不再显示插队钮
+- **验证**：compile/build 零错误；fence 8/8 + repair 14/14；legacy smoke 11/11（含 updateQueue 三动作探测）；vsix 268.4KB 已装机
+- Phase 2 至此收官（语法高亮/图片按钮/未读点/goal 卡/队列编辑全落地）；delta 合并下发（纯性能项）移入 Phase 3 按需
+
+## v0.8.0 — Phase 2 首批：代码语法高亮 + 图片按钮 + 未读点
+
+- **代码语法高亮（双方此前都无，补齐即代差）**：`code.tsx` 新组件——highlight.js core + 20 语言子集（ts/js/json/python/bash/powershell/css/html/md/sql/yaml/diff/java/go/c/cpp/c#/rust/php/ini）+ 40 别名表（tsx/sh/py/yml/…），未知语言诚实回退纯文本；调色板映射 VSCode Dark+ 令牌色，body.vscode-light 自动切换亮色；代码块带语言标签条 + hover 复制按钮。接入点在 markdown.tsx 的 pre/code 两处微创（分割器与 dsh-ui 回退零改动，fence 8/8 + repair 14/14 守绿）
+- **图片按钮**：composer 工具行新增 🖼 按钮（file picker，多选，走现有粘贴路径：>20MB 拒绝 / 4 格式 / base64 直发）
+- **会话列表未读点**：非当前会话 running→idle 翻转标记绿点，切换即清（回合结束检测，不依赖新协议消息）
+- **验证**：compile/build 零错误；fence 8/8 + repair 14/14（护城河仍零改动）；legacy smoke 11/11；vsix 266.3KB（webview +105KB 为高亮子集）已装机
+
+## v0.7.0 — Phase 1：视觉对齐（竞品 MIT 设计系统移植，React 重实现）
+
+- **新增 `icons.tsx`**：竞品 ICONS 线条图标表全量移植（30 path，24×24 / stroke 1.8 / currentColor，亮暗主题自适应），MIT 署名；emoji 图标（✎ ⑂ 🗄 ＋ ➤ ⏳ ✅ ❌）全部替换
+- **`styles.css`**：`:root` 增 9 个 `--dsh-*` 令牌 + color-scheme；composer 改 Codex 风格卡片（14px 圆角 / focus-within 变 accent / 输入 min72-max320 透明内嵌 / 34px 圆形发送钮）；msg-user 右对齐 max-92% + 14px 圆角；msg-role 10px 大写角色行（你 / DSH）；工具卡 10px 圆角 + 14px 内联缩进 + 三态色（蓝转/绿成/红败 + 失败红边）；审批红系 / 提问蓝系
+- **新增 UI 元素（app.tsx）**：头部两行（会话行 + 工具行：🌐 浏览器打开 + ＋ 新建）；回合分隔 999px 药丸（「⑂ 第 N 轮」，点击=从此分叉）；每轮产物卡（accent 边框，diff/edit view.locations 推导，点击打开文件）；回合操作条（复制 / 👍 / 👎）；底部常驻统计行（轮数 · 工具数 · token 用量）+ 上下文压力条（4px 三档 teal→warm→hot）；turn-status 脉冲点 + 计时
+- **fold.ts（非护城河）**：TurnItem 增 produced/lastSeq/turnNo；产物推导=成功 mutation 的 view.locations（网页端 ProducedFiles 语义，读/删/失败不计，首见去重）
+- **新消息**：open-file（宿主解析相对路径后打开编辑器）、open-browser、fork-at{atSeq}（药丸+操作条共用，manager.forkSessionInternal 支持定点分叉）、feedback（日志留痕，RPC 接入留 Phase 2）
+- **验证**：compile/build 零错误；fence 8/8 + repair 14/14（dshui/markdown/修复管线零改动红线守住）；legacy smoke 11/11（协议层无回归）。手测清单见 roadmap Phase 1 验收段
+- 设计原则不变：**移植设计系统，不抄像素**——令牌/间距/状态色对齐，React + 备忘渲染架构原样
+
+## v0.6.0 — Phase 0：双协议自适应层（0.1.1-rc.x + 0.1.2+ 同时兼容）
+
+- **背景**：DSH 0.1.2 线协议断代（斜杠端点 + `{args}` 信封 + 单 WS `remote.mux` + token 换 cookie 鉴权 + `session/page` 分页 + `modelCatalog`），用户持续升级 DSH 到最新版——协议适配成为 P0。docs/design.md §1 非目标中「锁定 rc.7+」策略作废，改双 flavor 探测切换（§3.0）
+- **新增 `src/connection/protocol.ts`**：连接时探测（先 `session/list` 404/失败回退 `session.list`/`host.describe`），401/403 也识别为 v012；流层连续 3 次断线重探（服务器中途升级自动跟随）；不可识别 → 横幅不静默死循环
+- **新增 `src/connection/remote.ts`**：V012Streams——单 `remote.mux` WS 多路逻辑流（open/cancel/item/end/error），把 v012 帧在连接层合成为 legacy 形状 mux payload（session/event、queue、projection、approval/question 卡）——**manager 与 webview 零改动消费两种服务器**；follow 游标 + 一次性 snapshot（历史尾页）
+- **新增 `src/connection/auth.ts`**：token 发现（设置 `dsh-vscode.authToken` → 插件拉起日志 `~/.dsh/dsh-vscode-web.log` → `~/.dsh` 日志扫描）→ `GET /?token=` 换签名 cookie；401 自动刷新重试一次。**实测：token 只在 dsh web stdout，外部终端启动无日志可扫 → authToken 设置兜底**
+- **`client.ts` 重写为 flavor 路由**：全部端点改名/参数适配收在一张表里。**实测坑（alpha.4 实机）**：args 必须逐参数精确匹配——单 request 方法包 `{request:{…}}`、`session/list` 要 `_request:{}`、`agent` 参数 wire 名 `agentId`、`commands/execute` 的 `images` 必填传 `[]`、流开帧同样包装（`session/follow` → `{request:{address}}`）。竞品 apiClient 平铺传参，在真实 alpha.4 上会被网关拒绝——未照抄
+- **验证**：legacy 链路 smoke 11/11（rc.2 实机 3080）；v012 链路 smoke 12/12（alpha.4 隔离实例 `DSH_HOME=%TEMP%` 3081，含探测/鉴权/remote.mux/$events/workspace 流/session 全链/分页快照/prompt 流式/turn end）；fence 8/8 + repair 14/14（渲染护城河零改动）
+- 附带：竞品分析 `docs/competitor-analysis.md` + 路线图 `docs/roadmap.md`（Phase 1 视觉对齐 → Phase 2 特性 → Phase 3/4 大项）
+
 ## v0.5.12 — badcase 7：裸组件根且丢 type，字段签名推断补壳
 
 - **形态**：`{"title":"核心判断","tone":"info","content":"…"}`——callout 的字段全在，但既没壳 `items` 也没 `type`。normalizeRoot 只认"带已知 type 的裸组件"，此形态穿透 → 渲染失败卡

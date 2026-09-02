@@ -10,7 +10,7 @@
 - 不做 agent 运行时（DSH 本体就是）
 - 不自管 dsh web 实例、不做 broker（dsh-vsc 脆根因）
 - V1 不做 IDE 能力反连桥（getDiagnostics 等是 V2）
-- 不追求兼容多个 DSH 版本（锁定 rc.7+，宽松解析为演进留余地）
+- **不追 DSH alpha 的每日变动，但必须同时兼容「当前 stable（0.1.1-rc.x）」与「下一代（0.1.2+ 线协议）」两个 flavor，连接时探测自动切换**（2026-09-02 修订：原「锁定 rc.7+」策略作废——用户将持续升级 DSH 到最新版，协议断代即全插件失效；见 §3.0）
 
 ## 2. 架构
 
@@ -41,8 +41,38 @@
 | 扩展宿主连协议，webview 不直连 | DSH 信任栅栏拒 webview Origin（Obsidian 版实测 403/1006） |
 | 不依赖 DSH 内部包 | dsh-vsc require 内部 zod schema，DSH 升级即碎 |
 | 复用常驻 3080 | 会话/插件（genui/agent-teams/workflow）与 GUI 共享，启动链最短 |
+| 协议双 flavor + 探测切换（2026-09-02） | 用户持续升级 DSH；协议知识集中在 src/connection，webview 对协议变更免疫 |
 
 ## 3. 协议契约（实测，来自 Obsidian 版考古 + rc.7 源码核对）
+
+### 3.0 协议 flavor（2026-09-02 引入）
+
+DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接时探测自动切换：
+
+| 维度 | legacy（0.1.1-rc.x，本节 3.1-3.4 均为此 flavor） | v012（0.1.2-alpha.4+） |
+|---|---|---|
+| HTTP 端点 | 点式 `/api/session.list`，payload 直传 | 斜杠 `/api/session/list`，payload 包 `{args}` 信封；`host.describe` 移除（探测改 `session/list`） |
+| 认证 | 无 | `GET /?token=<启动token>` 换签名 cookie，所有请求携带；401 刷新重试。token 来自 dsh web 启动输出/日志的授权 URL |
+| 事件通道 | 双 WS `events.mux` + `events.host`，只下行 | 单 WS `/api/remote.mux` 多路逻辑流：`session/follow`、`session/control`、`workspace/follow`、`$events`；帧 `{type:"open"/"cancel",streamId,endpoint,payload}`，服务端回 item/end/error |
+| 审批/提问应答 | `POST /api/respond`（裸回执 receipt） | `$events/result` waterfall outcome |
+| 端点改名 | `session.history` | `session/page`（address + throughSeq 分页） |
+|  | `session.models` | `session/modelCatalog` |
+|  | `goal.*` / `agentPreset.*` / `skill.list` | `goals/*` / `agentPresets/*` / `skills/list` |
+|  | `workspace.list` | 移除（列表由 `workspace/follow` 流提供） |
+| session.prompt | — | 需客户端预生成 requestId |
+
+探测顺序：先试 `session/list`（v012），404/失败回退 `session.list`/`host.describe`（legacy）；结果缓存，重连失败即重探；两试皆败 → 状态横幅「协议不识别」。v012 契约细节以竞品 apiClient.ts（MIT，0.12.90 源码）+ 本地 0.1.2 服务器实测为准，`src/connection/protocol.ts` 为唯一 flavor 判定点。
+
+**v012 实测线协议事实（2026-09-02，0.1.2-alpha.4 实机验证，smoke 12/12）**：
+- 一元 RPC 的 `args` 必须与描述符**逐参数精确匹配**（`dsh-api-gateway` assertExactArguments）：每个业务参数一个键，键名 = 参数名或 lookup wire 名。多键/缺键都报 `gateway/arguments-invalid`。
+- 单 `request` 参数的方法 → `args:{request:{...}}`：session/create、prompt、cancel、rename、fork、attachment、updateQueue、selectModel、page、workspace/create、archiveSession、skills/list。
+- 特例：`session/list` → `args:{_request:{}}`（保留参数名 `_request`）；`modelCatalog`/`agentPresets/list` → `args:{}`。
+- `agent: Agent` 参数走 lookup，wire 名 `agentId`：agentPresets/select、commands/list、commands/execute。**commands/execute 的 `images` 是网关必填字段**（无图也传 `[]`）。
+- 流开帧同样走参数匹配：`session/follow` → `payload:{args:{request:{address,maxMessages?}}}`；`session/control`、`workspace/follow`、`$events` → `args:{}`。
+- `$events/result` 精确三键 `{clientId, eventId, outcome}`；outcome `{kind:"result",value?}|{kind:"rejected",error}|{kind:"next"}`。
+- 会话事件信封与 legacy 完全一致（`assistant/chunk` 的 `data.chunk.type` 仍是 `text-delta`/`finish`…），fold 零改动。
+- 鉴权：`GET /?token=` 换 set-cookie（首段即 cookie）。**token 只打印在 dsh web 的 stdout**——外部终端启动时无日志文件可扫，auth.ts 的日志扫描只对「插件拉起（stdout 重定向到 ~/.dsh/dsh-vscode-web.log）」可靠；外部启动场景靠 `dsh-vscode.authToken` 设置兜底。
+- 竞品 0.12.90 的 apiClient 未实现 `{request:...}` 包装（平铺传参），其一元调用在真实 alpha.4 上同样会被网关拒绝——我们以实测为准，不照抄。
 
 ### 3.1 RPC 通道
 

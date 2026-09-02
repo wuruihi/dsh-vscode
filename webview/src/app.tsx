@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import type {
   ApprovalCard,
   ConnState,
@@ -12,10 +13,29 @@ import type {
   SessionItem,
   ViewToExt,
 } from "./protocol.js";
-import { ConversationFold, stripSystemContext, type FoldImage, type FoldItem, type ToolActivity } from "./fold.js";
+import { ConversationFold, stripSystemContext, type FoldImage, type FoldItem, type ToolActivity, type TurnItem } from "./fold.js";
+
+/** HH:MM:SS clock for jobs / trajectory rows. */
+function fmtClock(ms: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** Compact duration (ms → "1分23秒" / "45秒"). */
+function fmtDur(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}分${s % 60}秒`;
+  return `${Math.floor(m / 60)}时${m % 60}分`;
+}
 import { Markdown } from "./components/markdown.js";
 import { ActivityCard } from "./components/activity.js";
 import { ApprovalCardView, QuestionCardView } from "./components/cards.js";
+import { Icon } from "./components/icons.js";
 
 declare function acquireVsCodeApi(): { postMessage(m: ViewToExt): void; getState(): unknown; setState(s: unknown): void };
 
@@ -58,15 +78,35 @@ export function App() {
   const [questions, setQuestions] = useState<QuestionCard[]>([]);
   const [models, setModels] = useState<ModelsData | undefined>();
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
+  const [queueEditText, setQueueEditText] = useState("");
   const [tokens, setTokens] = useState<string>("");
+  const [ctxPct, setCtxPct] = useState<number | undefined>();
+  // goal projection: {goal:{id,revision,objective,phase,maxGoalRounds,blockedReason?},roundsStarted,…}
+  const [goalData, setGoalData] = useState<any>(null);
   const [notify, setNotify] = useState<{ kind: string; message: string } | undefined>();
   const [mode, setMode] = useState<"queue" | "steer">("queue");
   const [permission, setPermission] = useState<PermissionData | undefined>();
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
-  const [showSessionList, setShowSessionList] = useState(false);
+  const [drawer, setDrawer] = useState<"" | "sessions" | "workspace" | "jobs" | "traj" | "subs">("");
+  // trajectory raw events (capped; fed from history + live mux frames)
+  const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
+  const [jobs, setJobs] = useState<{ id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[]>([]);
+  const [subagentEntries, setSubagentEntries] = useState<{ id: string; mode: string; label: string; activity: string; hasChildren: boolean }[]>([]);
+  // subagent transcript sheet: which child is open + its history events
+  const [subView, setSubView] = useState<{ id: string; label?: string } | null>(null);
+  const [subEvents, setSubEvents] = useState<{ event: { type: string; seq?: number; time?: number; data?: any }; view?: any }[] | null>(null);
+  const [wsQuery, setWsQuery] = useState("");
+  const [trajFilter, setTrajFilter] = useState("");
+  const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const pickReqRef = useRef(0);
   const [renaming, setRenaming] = useState<{ sessionId: string; title: string } | undefined>();
   const [running, setRunning] = useState(false);
+  // unread dots: a non-current session that finished a run while we watched
+  const [unread, setUnread] = useState<Set<string>>(new Set());
+  const prevRunningRef = useRef<Map<string, boolean>>(new Map());
   // plan mode + todos arrive as session projections ("plan" / "todos")
   const [planActive, setPlanActive] = useState(false);
   const [todos, setTodos] = useState<{ content: string; status: string }[] | null>(null);
@@ -87,6 +127,7 @@ export function App() {
   const pinnedRef = useRef(true);
   const hasMoreRef = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const loadingOlderRef = useRef(false);
   // Scroll anchor for prepended history: {height, top} captured before the
   // load fires; after render, scrollTop is restored so the viewport stays on
@@ -116,6 +157,7 @@ export function App() {
           setLoadingOlder(false);
           setItems([...fold.items]);
           setRunning(fold.isRunning);
+          setRawEvents((m.entries as any[]).slice(-800));
           break;
         }
         case "history-older": {
@@ -124,6 +166,7 @@ export function App() {
           loadingOlderRef.current = false;
           setLoadingOlder(false);
           setItems([...foldRef.current.items]);
+          setRawEvents((re) => [...(m.entries as any[]), ...re].slice(-800));
           break;
         }
         case "mux-batch": {
@@ -131,6 +174,7 @@ export function App() {
           foldRef.current.pushMany(m.frames);
           setItems([...foldRef.current.items]);
           setRunning(foldRef.current.isRunning);
+          setRawEvents((re) => [...re, ...(m.frames as any[])].slice(-800));
           break;
         }
         case "approval":
@@ -180,14 +224,16 @@ export function App() {
           if (m.key === "tokenUsage" || m.key === "liveTokenUsage") {
             const v = (m.value ?? {}) as Record<string, number>;
             const parts: string[] = [];
-            if (v.outputTokens != null) parts.push(`out ${v.outputTokens}`);
-            if (v.uncachedInputTokens != null) parts.push(`in ${v.uncachedInputTokens}`);
-            if (v.cacheReadTokens != null) parts.push(`cache ${v.cacheReadTokens}`);
+            if (v.outputTokens != null) parts.push(`输出 ${v.outputTokens}`);
+            if (v.uncachedInputTokens != null) parts.push(`输入 ${v.uncachedInputTokens}`);
+            if (v.cacheReadTokens != null) parts.push(`缓存命中 ${v.cacheReadTokens}`);
             setTokens(parts.join(" · "));
           } else if (m.key === "contextPressure" && m.value != null) {
             const v = m.value as any;
             const pct = typeof v === "number" ? v : (v.percent ?? v.ratio);
-            if (typeof pct === "number") setTokens((t) => `${t ? `${t} · ` : ""}ctx ${Math.round(pct * 100)}%`);
+            setCtxPct(typeof pct === "number" ? Math.max(0, Math.min(1, pct)) : undefined);
+          } else if (m.key === "goal") {
+            setGoalData(m.value ?? null);
           } else if (m.key === "plan") {
             setPlanActive(Boolean((m.value as any)?.active));
           } else if (m.key === "todos") {
@@ -197,6 +243,22 @@ export function App() {
         case "notify":
           setNotify({ kind: m.kind, message: m.message });
           setTimeout(() => setNotify(undefined), 6000);
+          break;
+        case "picked": {
+          if (m.reqId !== pickReqRef.current) break; // stale response
+          setFileAtt((f) => [...f, ...m.items.filter((it) => !f.some((x) => x.path === it.path))]);
+          break;
+        }
+        case "jobs":
+          if (!current || m.sessionId !== current) break;
+          setJobs(m.jobs);
+          break;
+        case "subagents":
+          if (!current || m.sessionId !== current) break;
+          setSubagentEntries(m.entries as any);
+          break;
+        case "subagent-history":
+          setSubEvents(m.entries as any);
           break;
         case "attachment":
           if (m.data) imgCacheSet(m.attachmentId, { mediaType: m.mediaType, data: m.data });
@@ -229,6 +291,11 @@ export function App() {
     setPlanActive(false);
     setTodos(null);
     setTodoOpen(false);
+    setCtxPct(undefined);
+    setGoalData(null);
+    setJobs([]);
+    setSubagentEntries([]);
+    setRawEvents([]);
   }, [current]);
 
   // Restore scroll after prepended history (runs before the pinned autoscroll
@@ -373,6 +440,28 @@ export function App() {
   const currentSession = sessions.find((s) => s.sessionId === current);
   const currentTitle = currentSession?.title ?? (current ? "新会话" : "—");
   const busy = running || sessions.find((s) => s.sessionId === current)?.running === true;
+  // unread flip detection: running→idle on a session we are NOT looking at
+  useEffect(() => {
+    const prev = prevRunningRef.current;
+    const flips: string[] = [];
+    for (const s of sessions) {
+      const was = prev.get(s.sessionId);
+      if (was === true && !s.running && s.sessionId !== current) flips.push(s.sessionId);
+      prev.set(s.sessionId, s.running);
+    }
+    if (flips.length > 0) setUnread((u) => new Set([...u, ...flips]));
+  }, [sessions, current]);
+  const stats = useMemo(() => {
+    let turns = 0;
+    let tools = 0;
+    for (const it of items) {
+      if (it.kind === "turn" && it.ended) {
+        turns++;
+        tools += it.activities.length;
+      }
+    }
+    return { turns, tools };
+  }, [items]);
   const liveTool = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -383,31 +472,83 @@ export function App() {
 
   return (
     <div className="app">
-      {/* header */}
+      {/* header — two rows: session row + tool row (competitor layout) */}
       <div className="header">
-        <span className={`dot dot-${conn}`} title={conn} />
-        <button className="title-btn" onClick={() => setShowSessionList((v) => !v)} title="点击切换会话；✎ 重命名">
-          <span className="title-text">{currentTitle}</span>
-          <span className="chev">⌄</span>
-        </button>
-        <button
-          className="icon-btn mini"
-          title="重命名会话"
-          onClick={() => current && setRenaming({ sessionId: current, title: currentTitle === "—" ? "" : currentTitle })}
-        >
-          ✎
-        </button>
-        <PresetPicker
-          presets={presetData}
-          current={current}
-          presetOf={currentSession?.agentPreset}
-          locked={!currentSession?.blank}
-          onSelect={(p) => current && post({ t: "select-preset", sessionId: current, agentPreset: p })}
-        />
-        <span className="spacer" />
-        <button className="icon-btn" title="新建会话" onClick={() => post({ t: "new-session" })}>＋</button>
+        <div className="header-row header-session-row">
+          <span className={`dot dot-${conn}`} title={conn} />
+          <button className="title-btn" onClick={() => setDrawer((d) => (d === "sessions" ? "" : "sessions"))} title="点击切换会话；✎ 重命名">
+            <span className="title-text">{currentTitle}</span>
+            <span className="chev">⌄</span>
+          </button>
+          <button
+            className="icon-btn mini"
+            title="重命名会话"
+            onClick={() => current && setRenaming({ sessionId: current, title: currentTitle === "—" ? "" : currentTitle })}
+          >
+            <Icon name="edit" size={12} />
+          </button>
+        </div>
+        <div className="header-row header-tool-row">
+          <PresetPicker
+            presets={presetData}
+            current={current}
+            presetOf={currentSession?.agentPreset}
+            locked={!currentSession?.blank}
+            onSelect={(p) => current && post({ t: "select-preset", sessionId: current, agentPreset: p })}
+          />
+          <span className="spacer" />
+          <button
+            className={`icon-btn${drawer === "workspace" ? " is-on" : ""}`}
+            title="工作区：按目录分组 / 搜索 / 归档"
+            onClick={() => setDrawer((d) => (d === "workspace" ? "" : "workspace"))}
+          >
+            <Icon name="folder" size={13} />
+          </button>
+          <button
+            className={`icon-btn${drawer === "jobs" ? " is-on" : ""}`}
+            title="后台任务：本会话 agent 启动的 bash/pwsh/子代理任务"
+            onClick={() => setDrawer((d) => (d === "jobs" ? "" : "jobs"))}
+          >
+            <Icon name="ledger" size={13} />
+          </button>
+          <button
+            className={`icon-btn${drawer === "traj" ? " is-on" : ""}`}
+            title="轨迹：事件台账（原始事件流）"
+            onClick={() => setDrawer((d) => (d === "traj" ? "" : "traj"))}
+          >
+            <Icon name="list" size={13} />
+          </button>
+          <button
+            className={`icon-btn${drawer === "subs" ? " is-on" : ""}`}
+            title="子代理目录"
+            onClick={() => {
+              const opening = drawer !== "subs";
+              setDrawer((d) => (d === "subs" ? "" : "subs"));
+              if (current && opening) post({ t: "list-subagents", reqId: Date.now(), sessionId: current });
+            }}
+          >
+            <Icon name="box" size={13} />
+          </button>
+          <button
+            className="icon-btn"
+            title="扩展设置（DSH 服务器地址 / 认证令牌等）"
+            onClick={() => post({ t: "open-settings" })}
+          >
+            <Icon name="gear" size={13} />
+          </button>
+          <button className="icon-btn" title="在浏览器打开 DSH GUI" onClick={() => post({ t: "open-browser" })}>
+            <Icon name="globe" size={13} />
+          </button>
+          <button className="icon-btn" title="新建会话" onClick={() => post({ t: "new-session" })}>
+            <Icon name="plus" size={13} />
+          </button>
+        </div>
       </div>
-      {showSessionList && (
+
+      {/* goal dock bar — active-session goal projection (GUI GoalBar look) */}
+      <GoalBar data={goalData} />
+      {drawer === "sessions" && (
+        <Sheet title="会话列表" onClose={() => setDrawer("")}>
         <div className="session-list">
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}
           {sessions.map((s) => (
@@ -415,12 +556,19 @@ export function App() {
               key={s.sessionId}
               className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
               onClick={() => {
-                setShowSessionList(false);
+                setDrawer("");
+                setUnread((u) => {
+                  if (!u.has(s.sessionId)) return u;
+                  const n = new Set(u);
+                  n.delete(s.sessionId);
+                  return n;
+                });
                 post({ t: "switch", sessionId: s.sessionId });
               }}
               title={s.cwd ?? s.sessionId}
             >
               <span className={`dot dot-${s.running ? "running" : "idle"}`} />
+              {unread.has(s.sessionId) && <span className="unread-dot" title="有新消息" />}
               <span className="session-title">{s.title ?? "（未命名会话）"}</span>
               {s.subagents && s.subagents.total > 0 && (
                 <span
@@ -438,7 +586,7 @@ export function App() {
                   setRenaming({ sessionId: s.sessionId, title: s.title ?? "" });
                 }}
               >
-                ✎
+                <Icon name="edit" size={12} />
               </button>
               <button
                 className="icon-btn mini"
@@ -448,7 +596,7 @@ export function App() {
                   post({ t: "fork-session", sessionId: s.sessionId });
                 }}
               >
-                ⑂
+                <Icon name="branch" size={12} />
               </button>
               <button
                 className="icon-btn mini"
@@ -458,11 +606,209 @@ export function App() {
                   post({ t: "archive-session", sessionId: s.sessionId });
                 }}
               >
-                🗄
+                <Icon name="trash" size={12} />
               </button>
             </div>
           ))}
         </div>
+        </Sheet>
+      )}
+
+      {/* workspace sheet — sessions grouped by folder + title search */}
+      {drawer === "workspace" && (
+        <Sheet
+          title="📁 工作区"
+          onClose={() => setDrawer("")}
+          headControls={
+            <input
+              className="drawer-search sheet-search"
+              placeholder="搜索会话标题…"
+              value={wsQuery}
+              onChange={(e) => setWsQuery(e.target.value)}
+            />
+          }
+        >
+          {(() => {
+            const q = wsQuery.trim().toLowerCase();
+            const rows = q ? sessions.filter((s) => (s.title ?? "").toLowerCase().includes(q)) : sessions;
+            const groups = new Map<string, typeof rows>();
+            for (const s of rows) {
+              const root = (s.cwd ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "未分组";
+              if (!groups.has(root)) groups.set(root, []);
+              groups.get(root)!.push(s);
+            }
+            if (rows.length === 0) return <div className="muted pad">没有匹配的会话</div>;
+            return [...groups.entries()].map(([root, items]) => (
+              <div key={root} className="ws-group">
+                <div className="ws-group-title">📁 {root} <span className="muted">({items.length})</span></div>
+                {items.map((s) => (
+                  <div
+                    key={s.sessionId}
+                    className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
+                    title={s.cwd ?? s.sessionId}
+                    onClick={() => {
+                      setDrawer("");
+                      setUnread((u) => {
+                        if (!u.has(s.sessionId)) return u;
+                        const n = new Set(u);
+                        n.delete(s.sessionId);
+                        return n;
+                      });
+                      post({ t: "switch", sessionId: s.sessionId });
+                    }}
+                  >
+                    <span className={`dot dot-${s.running ? "running" : "idle"}`} />
+                    <span className="session-title">{s.title ?? "（未命名会话）"}</span>
+                    <button
+                      className="icon-btn mini"
+                      title="归档（从列表隐藏，可在 DSH 网页版找回）"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        post({ t: "archive-session", sessionId: s.sessionId });
+                      }}
+                    >
+                      <Icon name="trash" size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ));
+          })()}
+        </Sheet>
+      )}
+
+      {/* background jobs sheet (session/jobs frames; current session only) */}
+      {drawer === "jobs" && (
+        <Sheet title="⚙️ 后台任务" onClose={() => setDrawer("")}>
+          {jobs.length === 0 ? (
+            <div className="muted pad">
+              当前会话没有后台任务。agent 启动的 bash/pwsh/子代理等任务会出现在这里；
+              需要终止时可让 agent 执行 job_kill。
+            </div>
+          ) : (
+            jobs.map((j) => {
+              const dur =
+                j.startedAt && j.finishedAt
+                  ? `${fmtClock(j.startedAt)} → ${fmtClock(j.finishedAt)}（${fmtDur(j.finishedAt - j.startedAt)}）`
+                  : j.startedAt
+                    ? `${fmtClock(j.startedAt)} · 已运行 ${fmtDur(Date.now() - j.startedAt)}`
+                    : "";
+              return (
+                <div key={j.id} className="job-row" title={j.detail ?? j.label}>
+                  <span className={`job-dot job-${j.status}`} />
+                  <span className="job-main">
+                    <span className="job-label">{j.label || j.kind}</span>
+                    <span className="job-meta muted">
+                      [{j.kind}] {j.status}
+                      {dur ? ` · ${dur}` : ""}
+                      {j.detail ? ` · ${j.detail}` : ""}
+                    </span>
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </Sheet>
+      )}
+
+      {/* trajectory sheet — raw event ledger, turn separators, clock (wide) */}
+      {drawer === "traj" && (
+        <Sheet
+          wide
+          title={`🧭 事件轨迹（${rawEvents.length} 条）`}
+          onClose={() => setDrawer("")}
+          headControls={
+            <input
+              className="drawer-search sheet-search"
+              placeholder="筛选事件类型（如 tool/call）…"
+              value={trajFilter}
+              onChange={(e) => setTrajFilter(e.target.value)}
+            />
+          }
+        >
+          {(() => {
+            const q = trajFilter.trim().toLowerCase();
+            const rows = rawEvents.filter((e) => !q || (e.event?.type ?? "").toLowerCase().includes(q));
+            if (rows.length === 0) return <div className="muted pad">（没有匹配的事件）</div>;
+            let turnNo = 0;
+            return (
+              <div className="traj-list">
+                {rows.slice(-300).reverse().map((e, i) => {
+                  const seq = e.event?.seq ?? i;
+                  const open = trajOpenSeq === seq;
+                  if (e.event?.type === "turn/start") turnNo += 1;
+                  return (
+                    <div key={`${seq}-${i}`}>
+                      {e.event?.type === "turn/start" && <div className="traj-turn-sep">━ 回合 {turnNo} ━</div>}
+                      <div className="traj-row" onClick={() => setTrajOpenSeq(open ? null : seq)}>
+                        <span className="traj-seq">#{seq}</span>
+                        <span className="traj-clock muted">{e.event?.time ? fmtClock(e.event.time) : ""}</span>
+                        <span className="traj-type">{e.event?.type ?? "?"}</span>
+                        <span className="traj-brief">{JSON.stringify(e.event?.data ?? null).slice(0, 90)}</span>
+                        {open && <pre className="code-block traj-full">{JSON.stringify(e, null, 2)}</pre>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </Sheet>
+      )}
+
+      {/* subagents drawer (subagent.list / subagents/list) */}
+      {/* subagents sheet — list + read-only transcript (wide, like the GUI) */}
+      {drawer === "subs" && (
+        <Sheet
+          wide
+          title={subView ? `📦 ${subView.label ?? subView.id.slice(0, 12)}` : "📦 子代理目录"}
+          onClose={() => {
+            if (subView) {
+              setSubView(null);
+              setSubEvents(null);
+            } else {
+              setDrawer("");
+            }
+          }}
+          headControls={
+            subView ? (
+              <button className="link-btn" onClick={() => { setSubView(null); setSubEvents(null); }}>
+                ← 返回目录
+              </button>
+            ) : (
+              <button
+                className="link-btn"
+                onClick={() => current && post({ t: "list-subagents", reqId: Date.now(), sessionId: current })}
+              >
+                刷新
+              </button>
+            )
+          }
+        >
+          {subView ? (
+            <SubagentTranscript events={subEvents} />
+          ) : subagentEntries.length === 0 ? (
+            <div className="muted pad">本会话没有子代理。continuable 子代理可在 DSH 网页版继续对话。</div>
+          ) : (
+            subagentEntries.map((sa) => (
+              <div
+                key={sa.id}
+                className="sub-row sub-row-click"
+                title={`${sa.id}\n点击查看对话`}
+                onClick={() => {
+                  setSubView({ id: sa.id, label: sa.label });
+                  setSubEvents(null);
+                  post({ t: "subagent-history", sessionId: sa.id });
+                }}
+              >
+                <span className={`dot dot-${sa.activity === "active" ? "running" : "idle"}`} />
+                <span className="sub-label">{sa.label || sa.id.slice(0, 8)}</span>
+                <span className="sub-mode muted">{sa.mode === "continuable" ? "可持续" : "一次性"}</span>
+                <span className="muted">›</span>
+              </div>
+            ))
+          )}
+        </Sheet>
       )}
       {renaming && (
         <div className="rename-bar">
@@ -522,18 +868,66 @@ export function App() {
         ))}
       </div>
 
-      {/* queue strip */}
+      {/* queue strip — chips with remove / edit / steer (server updateQueue) */}
       {queue.length > 0 && (
         <div className="queue-strip">
-          {queue.map((qi) => (
-            <span key={qi.id} className="queue-chip" title={qi.text}>
-              {qi.placement === "steering" ? "⇢ " : "⏳ "}
-              {qi.text.slice(0, 40)}
-              <button className="icon-btn mini" title="移除" onClick={() => current && post({ t: "queue-remove", sessionId: current, itemId: qi.id })}>
-                ×
-              </button>
-            </span>
-          ))}
+          {queue.map((qi) =>
+            editingQueueId === qi.id ? (
+              <span key={qi.id} className="queue-edit-box">
+                <textarea
+                  autoFocus
+                  rows={2}
+                  value={queueEditText}
+                  onChange={(e) => setQueueEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditingQueueId(null);
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      if (current && queueEditText.trim()) post({ t: "queue-edit", sessionId: current, itemId: qi.id, text: queueEditText });
+                      setEditingQueueId(null);
+                    }
+                  }}
+                />
+                <button
+                  className="link-btn"
+                  title="保存（Ctrl+Enter）"
+                  onClick={() => {
+                    if (current && queueEditText.trim()) post({ t: "queue-edit", sessionId: current, itemId: qi.id, text: queueEditText });
+                    setEditingQueueId(null);
+                  }}
+                >
+                  保存
+                </button>
+                <button className="link-btn" onClick={() => setEditingQueueId(null)}>取消</button>
+              </span>
+            ) : (
+              <span key={qi.id} className="queue-chip" title={qi.text}>
+                {qi.placement === "steering" ? "⇢ " : "⏳ "}
+                {qi.text.slice(0, 40)}
+                {qi.placement !== "steering" && (
+                  <button
+                    className="icon-btn mini"
+                    title="插队：转为引导消息，立即影响当前轮"
+                    onClick={() => current && post({ t: "queue-steer", sessionId: current, itemId: qi.id })}
+                  >
+                    <Icon name="rewind" size={11} />
+                  </button>
+                )}
+                <button
+                  className="icon-btn mini"
+                  title="编辑内容"
+                  onClick={() => {
+                    setEditingQueueId(qi.id);
+                    setQueueEditText(qi.text);
+                  }}
+                >
+                  <Icon name="edit" size={11} />
+                </button>
+                <button className="icon-btn mini" title="移除" onClick={() => current && post({ t: "queue-remove", sessionId: current, itemId: qi.id })}>
+                  <Icon name="x" size={11} />
+                </button>
+              </span>
+            ),
+          )}
         </div>
       )}
 
@@ -544,7 +938,9 @@ export function App() {
           messages flow down into "what's running now", then the input) */}
       {(busy || liveTool) && (
         <div className="live-bar">
-          <span className="spinner" /> {liveTool ? `正在执行：${liveTool}` : "思考中…"}
+          <span className="turn-status-dot" />
+          <span className="turn-status-text">{liveTool ? `正在执行：${liveTool}` : "深度思考中…"}</span>
+          <Elapsed />
           <span className="spacer" />
           <button className="link-btn" onClick={() => current && post({ t: "cancel", sessionId: current })}>停止</button>
         </div>
@@ -739,10 +1135,82 @@ export function App() {
             disabled={!draft.trim() && fileAtt.length === 0}
             onClick={onSendDraft}
           >
-            ➤
+            <Icon name="send" size={15} />
           </button>
         </div>
         <div className="composer-actions">
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              void (async () => {
+                for (const f of files) {
+                  const data = await fileToBase64(f);
+                  if (data) send([{ type: "image", mediaType: f.type, data }]);
+                }
+              })();
+            }}
+          />
+          <div className="add-menu-wrap">
+            {addMenuOpen && (
+              <div className="add-menu">
+                <button
+                  className="add-menu-item"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    pickReqRef.current += 1;
+                    post({ t: "pick-file", reqId: pickReqRef.current });
+                  }}
+                >
+                  <Icon name="edit" size={12} /> 添加文件
+                </button>
+                <button
+                  className="add-menu-item"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    pickReqRef.current += 1;
+                    post({ t: "pick-folder", reqId: pickReqRef.current });
+                  }}
+                >
+                  <Icon name="folder" size={12} /> 添加文件夹
+                </button>
+                <button
+                  className="add-menu-item"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    imgInputRef.current?.click();
+                  }}
+                >
+                  <Icon name="image" size={12} /> 添加图片
+                </button>
+              </div>
+            )}
+            <button
+              className={`icon-btn${addMenuOpen ? " is-on" : ""}`}
+              title="添加附件（文件 / 文件夹 / 图片）"
+              onClick={() => setAddMenuOpen((v) => !v)}
+            >
+              <Icon name="plus" size={13} />
+            </button>
+          </div>
+          <button
+            className="icon-btn"
+            title="命令与技能（/）"
+            onClick={() => {
+              setDraft("/");
+              setSlashPopup({ items: slashCacheRef.current?.items ?? [], sel: 0, tokenStart: 0, query: "" });
+              slashReqRef.current += 1;
+              if (current) post({ t: "list-slash", reqId: slashReqRef.current, sessionId: current });
+              taRef.current?.focus();
+            }}
+          >
+            <Icon name="slash" size={13} />
+          </button>
           <button
             className={`chip-btn ${mode === "steer" ? "is-on" : ""}`}
             title="steer：运行中追加引导，插队生效"
@@ -782,7 +1250,24 @@ export function App() {
             </select>
           )}
         </div>
-        {tokens && <div className="composer-meta">{tokens}</div>}
+      </div>
+
+      {/* stats line — always visible below the composer (web GUI dock style):
+          turn/tool counts + token usage + context pressure bar */}
+      <div className="stats-line">
+        <span>轮 {stats.turns} · 工具 {stats.tools}</span>
+        {tokens && <span> · {tokens}</span>}
+        {ctxPct !== undefined && (
+          <span className="context-bar" title={`上下文压力 ${Math.round(ctxPct * 100)}%`}>
+            <span className="context-label">上下文</span>
+            <span className="context-fill-wrap">
+              <span
+                className={`context-fill${ctxPct >= 0.85 ? " hot" : ctxPct >= 0.6 ? " warm" : ""}`}
+                style={{ width: `${Math.min(100, Math.round(ctxPct * 100))}%` }}
+              />
+            </span>
+          </span>
+        )}
       </div>
     </div>
   );
@@ -792,6 +1277,7 @@ function ItemView({ item, sessionId }: { item: FoldItem; sessionId?: string }) {
   if (item.kind === "user") {
     return (
       <div className="msg user">
+        <div className="msg-role">你</div>
         {item.text ? <div className="bubble user-bubble">{item.text}</div> : null}
         {item.files && item.files.length > 0 && (
           <div className="msg-files">
@@ -813,7 +1299,7 @@ function ItemView({ item, sessionId }: { item: FoldItem; sessionId?: string }) {
   if (item.kind === "info") {
     return <div className="msg muted">{item.text}</div>;
   }
-  return <TurnView item={item} />;
+  return <TurnView item={item} sessionId={sessionId} />;
 }
 
 /** One image in a user message. Durable refs pull bytes through the extension
@@ -877,36 +1363,215 @@ function MsgImage({ img, sessionId }: { img: FoldImage; sessionId?: string }) {
   );
 }
 
-const TurnView = ({ item }: { item: any }) => {
-  const [showThinking, setShowThinking] = useState(false);
+/** Read-only transcript of a subagent child session (folds its history with
+ *  the same pipeline as the main view; null events = loading). */
+function SubagentTranscript({ events }: { events: { event: { type: string; seq?: number; time?: number; data?: any }; view?: any }[] | null }) {
+  const items = useMemo(() => {
+    if (!events) return null;
+    const fold = new ConversationFold();
+    fold.pushMany(events);
+    return fold.items;
+  }, [events]);
+  if (events === null) return <div className="muted pad">⏳ 正在读取子代理对话…</div>;
+  if (!items || items.length === 0) return <div className="muted pad">（子代理还没有对话内容）</div>;
+  return (
+    <div className="sub-transcript">
+      {items.map((it) => (
+        <ItemView key={it.key} item={it} sessionId={undefined} />
+      ))}
+    </div>
+  );
+}
+
+/** Right-side sheet (competitor panel interaction, probed from its CSS):
+ *  fixed scrim + right-anchored sheet, Esc / click-scrim closes, 0.16s
+ *  slide-in. wide = 620px (trajectory / subagent transcript), else 400px. */
+function Sheet({ title, onClose, wide, headControls, children }: { title: ReactNode; onClose: () => void; wide?: boolean; headControls?: ReactNode; children: ReactNode }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+  return (
+    <div className="sheet-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`sheet${wide ? " sheet-wide" : ""}`}>
+        <div className="sheet-head">
+          <span className="sheet-title">{title}</span>
+          {headControls && <span className="sheet-controls">{headControls}</span>}
+          <button className="icon-btn mini sheet-close" title="关闭 (Esc)" onClick={onClose}>
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+        <div className="sheet-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+const TurnView = ({ item, sessionId }: { item: TurnItem; sessionId?: string }) => {
+  const [openThinking, setOpenThinking] = useState(false);
   const text = stripSystemContext(item.text ?? "");
+  // INTERLEAVED render: segments are the source of truth (text → tool →
+  // thinking → text …) in true arrival order — the same reading flow as the
+  // GUI and the competitor panel, instead of a fixed thinking/tools/text stack.
+  const segs = item.segments && item.segments.length > 0 ? item.segments : fallbackSegs(item);
+  const lastSeg = segs[segs.length - 1];
   return (
     <div className="msg assistant">
-      {item.thinking ? (
-        <div className="thinking">
-          <button className="link-btn" onClick={() => setShowThinking((v) => !v)}>
-            💭 思考过程 {showThinking ? "▾" : "▸"}
-          </button>
-          {showThinking && <div className="thinking-body"><Markdown text={stripSystemContext(item.thinking)} /></div>}
-        </div>
-      ) : null}
-      {item.activities.length > 0 && (
-        <div className="activities">
-          {item.activities.map((a: ToolActivity) => (
-            <ActivityCard key={a.key} act={a} />
-          ))}
+      {item.ended && item.turnNo !== undefined && item.lastSeq !== undefined && sessionId && (
+        <div className="fork-divider">
+          <div className="fork-divider-line">
+            <button
+              className="fork-divider-btn"
+              title="从本轮结束处分叉出新会话"
+              onClick={() => post({ t: "fork-at", sessionId, atSeq: item.lastSeq! })}
+            >
+              <Icon name="branch" size={11} /> 第 {item.turnNo} 轮
+            </button>
+          </div>
         </div>
       )}
-      {text ? (
-        <div className="bubble assistant-bubble">
-          <Markdown text={text} live={!item.ended} />
-        </div>
-      ) : !item.ended ? (
-        <div className="cursor">▍</div>
-      ) : null}
+      <div className="msg-role">DSH</div>
+      {segs.map((s, i) => {
+        if (s.kind === "thinking") {
+          const t = stripSystemContext(s.text ?? "");
+          if (!t) return null;
+          return (
+            <div className="thinking turn-seg" key={`h${i}`}>
+              <button className="link-btn" onClick={() => setOpenThinking((v) => !v)}>
+                💭 思考过程 {openThinking ? "▾" : "▸"}
+              </button>
+              {openThinking && <div className="thinking-body"><Markdown text={t} /></div>}
+            </div>
+          );
+        }
+        if (s.kind === "tool" && s.act) return <ActivityCard key={`a${s.act.key}-${i}`} act={s.act} />;
+        if (s.kind !== "text") return null;
+        const segText = stripSystemContext(s.text ?? "");
+        if (!segText) return null;
+        return (
+          <div className="bubble assistant-bubble turn-seg" key={`t${i}`}>
+            <Markdown text={segText} live={!item.ended && i === segs.length - 1} />
+          </div>
+        );
+      })}
+      {!item.ended && (!lastSeg || lastSeg.kind !== "text") && <div className="cursor">▍</div>}
+      {item.ended && item.produced && item.produced.length > 0 && <ProducedCard files={item.produced} />}
+      {item.ended && text && sessionId && <TurnActions item={item} sessionId={sessionId} />}
     </div>
   );
 };
+
+/** Pre-segments items (old folds) still render via the flat views. */
+function fallbackSegs(item: TurnItem): { kind: "text" | "thinking" | "tool"; text?: string; act?: ToolActivity }[] {
+  const out: { kind: "text" | "thinking" | "tool"; text?: string; act?: ToolActivity }[] = [];
+  if (item.thinking) out.push({ kind: "thinking", text: item.thinking });
+  for (const a of item.activities) out.push({ kind: "tool", act: a });
+  if (item.text) out.push({ kind: "text", text: item.text });
+  return out;
+}
+
+/** Files produced by a finished turn (diff/edit locations) — accent-bordered
+ *  card between the answer and the action bar (web GUI ProducedFiles look). */
+function ProducedCard({ files }: { files: string[] }) {
+  return (
+    <div className="files-card">
+      <div className="files-card-head">
+        <Icon name="box" size={12} /> 本轮产出（{files.length}）
+      </div>
+      <div className="files-card-rows">
+        {files.map((f) => {
+          const isDir = /[\\/]$/.test(f);
+          const label = f.split(/[\\/]/).filter(Boolean).pop() ?? f;
+          return (
+            <button key={f} className="files-card-row" title={f} onClick={() => post({ t: "open-file", path: f })}>
+              <Icon name={isDir ? "folder" : "edit"} size={11} />
+              <span className="files-card-path">{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Per-turn action bar: copy / vote / fork-from-here (web GUI msg-actions). */
+function TurnActions({ item, sessionId }: { item: TurnItem; sessionId: string }) {
+  const [vote, setVote] = useState<"up" | "down" | undefined>();
+  return (
+    <div className="msg-actions">
+      <button
+        className="msg-action-btn"
+        title="复制回答"
+        onClick={() => void navigator.clipboard.writeText(stripSystemContext(item.text ?? ""))}
+      >
+        <Icon name="copy" />
+      </button>
+      <button
+        className={`msg-action-btn${vote === "up" ? " selected-positive" : ""}`}
+        title="有帮助"
+        onClick={() => {
+          setVote("up");
+          post({ t: "feedback", sessionId, kind: "up" });
+        }}
+      >
+        <Icon name="up" />
+      </button>
+      <button
+        className={`msg-action-btn${vote === "down" ? " selected-negative" : ""}`}
+        title="没帮助"
+        onClick={() => {
+          setVote("down");
+          post({ t: "feedback", sessionId, kind: "down" });
+        }}
+      >
+        <Icon name="down" />
+      </button>
+    </div>
+  );
+}
+
+/** Elapsed-seconds readout for the running turn (tabular numerals). */
+function Elapsed() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setSec((s) => s + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <span className="turn-status-elapsed">{sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}`}</span>;
+}
+
+const GOAL_PHASE_LABEL: Record<string, string> = {
+  active: "进行中",
+  complete: "已完成",
+  paused: "已暂停",
+  blocked: "受阻",
+};
+
+/** Goal dock bar — the current session's goal projection, pinned under the
+ *  header (web GUI GoalBar dock). phase: active|complete|paused|blocked. */
+function GoalBar({ data }: { data: any }) {
+  const goal = data?.goal;
+  if (!goal || typeof goal.objective !== "string") return null;
+  const phase = typeof goal.phase === "string" ? goal.phase : "active";
+  const label = GOAL_PHASE_LABEL[phase] ?? phase;
+  const rounds = typeof data?.roundsStarted === "number" ? data.roundsStarted : undefined;
+  const max = typeof goal.maxGoalRounds === "number" ? goal.maxGoalRounds : undefined;
+  const blockedMsg = phase === "blocked" ? goal.blockedReason?.message : undefined;
+  return (
+    <div
+      className={`goal-bar goal-${phase}`}
+      title={blockedMsg ? `受阻：${blockedMsg}` : goal.objective}
+    >
+      <span className="goal-glyph">◎</span>
+      <span className="goal-objective">{goal.objective}</span>
+      <span className="goal-phase-badge">{label}</span>
+      {rounds !== undefined && <span className="goal-rounds">{max !== undefined ? `${rounds}/${max}` : rounds} 轮</span>}
+    </div>
+  );
+}
 
 /** Native agent-preset picker: selectable only while the session is blank
  *  (DSH locks the assembly after the first turn — agent-preset-locked). */

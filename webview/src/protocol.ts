@@ -102,6 +102,10 @@ export type ExtToView =
   | { t: "inject-attachment"; label: string; text: string }
   | { t: "files"; reqId: number; items: { path: string; rel: string }[] }
   | { t: "slash"; reqId: number; items: { kind: "skill" | "command"; name: string; description: string }[] }
+  | { t: "picked"; reqId: number; items: { path: string; rel: string }[] }
+  | { t: "jobs"; sessionId: string; jobs: { id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[] }
+  | { t: "subagents"; sessionId: string; entries: { kind: string; id: string; mode: string; label: string; activity: string; hasChildren: boolean }[] }
+  | { t: "subagent-history"; sessionId: string; entries: unknown[] }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
   /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
   | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
@@ -124,10 +128,23 @@ export type ViewToExt =
   | { t: "set-session-permission"; sessionId: string; preset: string }
   | { t: "get-models"; sessionId: string }
   | { t: "queue-remove"; sessionId: string; itemId: string }
+  | { t: "queue-edit"; sessionId: string; itemId: string; text: string }
+  | { t: "queue-steer"; sessionId: string; itemId: string }
   | { t: "load-older"; sessionId: string; beforeSeq: number }
   | { t: "list-files"; reqId: number; query: string }
   | { t: "list-slash"; reqId: number; sessionId: string }
   | { t: "run-command"; sessionId: string; line: string }
   | { t: "open-diff"; callId: string }
   | { t: "get-attachment"; sessionId: string; attachmentId: string }
-  | { t: "log"; message: string };
+  | { t: "log"; message: string }
+  // Phase 1 additions
+  | { t: "open-file"; path: string }
+  | { t: "open-browser" }
+  | { t: "fork-at"; sessionId: string; atSeq: number }
+  | { t: "feedback"; sessionId: string; kind: "up" | "down"; comment?: string }
+  // Phase 2 tool surface
+  | { t: "pick-file"; reqId: number }
+  | { t: "pick-folder"; reqId: number }
+  | { t: "open-settings" }
+  | { t: "list-subagents"; reqId: number; sessionId: string }
+  | { t: "subagent-history"; sessionId: string };

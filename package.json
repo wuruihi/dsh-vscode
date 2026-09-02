@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.5.12",
+  "version": "0.13.0",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -88,6 +88,11 @@
           "default": true,
           "description": "Offer to start dsh web when it is not reachable."
         },
+        "dsh-vscode.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "DSH 0.1.2+ launch token (the token=... part of the authorization URL printed by `dsh web`). Only needed when connecting to an externally started 0.1.2+ server whose token cannot be discovered from logs."
+        },
         "dsh-vscode.nodePath": {
           "type": "string",
           "default": "C:\\Program Files\\nodejs\\node.exe",
@@ -119,6 +124,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "highlight.js": "^11.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",

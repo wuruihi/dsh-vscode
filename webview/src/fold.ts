@@ -28,9 +28,24 @@ export interface TurnItem {
   thinking: string;
   activities: ToolActivity[];
   ended: boolean;
+  /** INTERLEAVED segments in true arrival order — the render source of
+   *  truth (text/thinking/activities above stay synced as flat views). */
+  segments: TurnSeg[];
   /** current running tool label for the live indicator */
   liveTool?: string;
+  /** files produced by this turn's successful mutation tools (diff/edit
+   *  call-view locations, web-GUI ProducedFiles semantics) */
+  produced?: string[];
+  /** last event seq seen in this turn — the fork-at anchor */
+  lastSeq?: number;
+  /** 1-based turn number for the separator pill */
+  turnNo?: number;
 }
+
+export type TurnSeg =
+  | { kind: "text"; text: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "tool"; act: ToolActivity };
 
 export interface UserItem {
   kind: "user";
@@ -129,7 +144,7 @@ export class ConversationFold {
       case "turn/start": {
         this.running = true;
         this.turnCounter += 1;
-        this.items.push({ kind: "turn", key: `t${this.turnCounter}-${this.lastSeq}`, text: "", thinking: "", activities: [], ended: false });
+        this.items.push({ kind: "turn", key: `t${this.turnCounter}-${this.lastSeq}`, text: "", thinking: "", activities: [], segments: [], ended: false, turnNo: this.turnCounter });
         break;
       }
       case "turn/end": {
@@ -138,6 +153,7 @@ export class ConversationFold {
         if (cur) {
           cur.ended = true;
           cur.liveTool = undefined;
+          cur.lastSeq = this.lastSeq; // fork-at anchor: everything through this seq
         } else {
           // Warmup/empty turn with no start seen — ignore.
         }
@@ -145,6 +161,21 @@ export class ConversationFold {
       }
       case "assistant/chunk": {
         this.applyChunk(ev.data?.chunk, view);
+        break;
+      }
+      // History replay (session/page) compacts text/reasoning deltas into
+      // chunkrow rows — text-delta chunks are NOT persisted (probed: 3474
+      // assistant/chunk events in a real history contain only
+      // block/tool-call/usage/finish frames). Without these two cases every
+      // reloaded conversation lost all its prose.
+      case "chunkrow/text-chunks": {
+        const texts = ev.data?.texts;
+        if (Array.isArray(texts) && texts.length > 0) this.appendSeg("text", texts.join(""));
+        break;
+      }
+      case "chunkrow/reasoning-chunks": {
+        const texts = ev.data?.texts;
+        if (Array.isArray(texts) && texts.length > 0) this.appendSeg("thinking", texts.join(""));
         break;
       }
       case "assistant/message": {
@@ -159,20 +190,38 @@ export class ConversationFold {
       }
       case "tool/call": {
         const d = ev.data ?? {};
-        const args = parseJson(d.arguments) ?? (view?.view?.card ? undefined : undefined);
+        const args = parseJson(d.arguments);
         const meta = subagentMeta(d.name, args);
         this.toolActivity({
           key: String(d.callId ?? `tc${this.lastSeq}`),
           name: meta?.displayName ?? d.name,
           args,
-          label: meta ? meta.label : `🔧 ${d.name ?? "工具"}`,
+          label: meta ? meta.label : String(d.name ?? "工具"),
         });
         break;
       }
       case "tool/result": {
         const d = ev.data ?? {};
         const preview = extractResultPreview(d, view?.view);
-        this.finishTool(String(d.callId ?? ""), preview, isErrorResult(d));
+        const isError = isErrorResult(d);
+        if (!isError) this.addProduced(producedPathsFromCallView(view?.view));
+        // wire fact (rc.2/alpha.5 probed): the callId lives at
+        // data.callId OR nested in data.message.source.callId /
+        // data.message.content[0].toolCallId — the top-level read alone
+        // left every activity "running" forever.
+        this.finishTool(resultCallId(d), preview, isError);
+        break;
+      }
+      case "step/start": {
+        const d = ev.data ?? {};
+        const key = `st:${d.id ?? `${d.turn ?? "?"}-${d.step ?? "?"}`}`;
+        this.toolActivity({ key, name: d.title ?? d.name, label: `📍 ${d.title ?? d.name ?? `步骤 ${d.step ?? ""}`}`.trim() });
+        break;
+      }
+      case "step/end": {
+        const d = ev.data ?? {};
+        const key = `st:${d.id ?? `${d.turn ?? "?"}-${d.step ?? "?"}`}`;
+        this.finishTool(key, "", false);
         break;
       }
       default:
@@ -205,13 +254,13 @@ export class ConversationFold {
 
   private applyChunk(chunk: any, view: { view?: any } | undefined): void {
     if (!chunk || typeof chunk.type !== "string") return;
-    const cur = this.ensureTurn();
+    this.ensureTurn(); // early chunk before turn/start still gets a turn
     switch (chunk.type) {
       case "text-delta":
-        if (typeof chunk.text === "string") cur.text += chunk.text;
+        if (typeof chunk.text === "string") this.appendSeg("text", chunk.text);
         break;
       case "reasoning-delta":
-        if (typeof chunk.text === "string") cur.thinking += chunk.text;
+        if (typeof chunk.text === "string") this.appendSeg("thinking", chunk.text);
         break;
       case "usage":
       case "finish":
@@ -225,14 +274,16 @@ export class ConversationFold {
           key: String(chunk.callId ?? chunk.toolCallId ?? chunk.id ?? `c${this.lastSeq}`),
           name: meta?.displayName ?? name,
           args,
-          label: meta ? meta.label : `🔧 ${name ?? "工具"}`,
+          label: meta ? meta.label : String(name ?? "工具"),
         });
         break;
       }
       case "tool-result":
       case "tool-call-result": {
         const preview = extractResultPreview(chunk, view?.view);
-        this.finishTool(String(chunk.callId ?? chunk.toolCallId ?? chunk.id ?? ""), preview, isErrorResult(chunk));
+        const isError = isErrorResult(chunk);
+        if (!isError) this.addProduced(producedPathsFromCallView(view?.view));
+        this.finishTool(resultCallId(chunk), preview, isError);
         break;
       }
       case "agent-start":
@@ -269,11 +320,38 @@ export class ConversationFold {
     let cur = this.currentTurn();
     if (!cur || cur.ended) {
       this.turnCounter += 1;
-      cur = { kind: "turn", key: `t${this.turnCounter}-${this.lastSeq}`, text: "", thinking: "", activities: [], ended: false };
+      cur = { kind: "turn", key: `t${this.turnCounter}-${this.lastSeq}`, text: "", thinking: "", activities: [], segments: [], ended: false, turnNo: this.turnCounter };
       this.items.push(cur);
       this.running = true;
     }
     return cur;
+  }
+
+  /** Append a text/thinking delta to the LAST segment of its kind — creating
+   *  one when the kind changes — so segments stay interleaved in true
+   *  arrival order (text → tool → text renders in exactly that order). */
+  private appendSeg(kind: "text" | "thinking", delta: string): void {
+    const cur = this.ensureTurn();
+    if (kind === "text") cur.text += delta;
+    else cur.thinking += delta;
+    const last = cur.segments[cur.segments.length - 1];
+    if (last && last.kind === kind) {
+      (last as { text: string }).text += delta;
+    } else {
+      cur.segments.push(kind === "text" ? { kind: "text", text: delta } : { kind: "thinking", text: delta });
+    }
+  }
+
+  /** Produced-files derivation (web-GUI ProducedFiles semantics): only diff
+   *  cards or kind=edit generic cards count; reads/deletes/failed calls don't.
+   *  First-seen order, de-duplicated. */
+  private addProduced(paths: string[]): void {
+    if (paths.length === 0) return;
+    const cur = this.ensureTurn();
+    cur.produced ??= [];
+    for (const p of paths) {
+      if (!cur.produced.includes(p)) cur.produced.push(p);
+    }
   }
 
   private currentTurn(): TurnItem | undefined {
@@ -285,7 +363,7 @@ export class ConversationFold {
     return undefined;
   }
 
-  private toolActivity(init: { key: string; name?: string; args?: unknown; label: string }): void {
+  private toolActivity(init: { key: string; name?: string; args?: unknown; label: string; kind?: ToolActivity["kind"] }): void {
     const cur = this.ensureTurn();
     const existing = cur.activities.find((a) => a.key === init.key);
     if (existing) {
@@ -295,7 +373,7 @@ export class ConversationFold {
     }
     const act: ToolActivity = {
       key: init.key,
-      kind: init.label.startsWith("🔧") ? "tool" : init.label.startsWith("👥") ? "subagent" : init.label.startsWith("👤") ? "agent" : "other",
+      kind: init.kind ?? (init.label.startsWith("👥") ? "subagent" : init.label.startsWith("👤") ? "agent" : init.label.startsWith("📍") ? "step" : "tool"),
       label: init.label,
       detail: argsPreview(init.args),
       state: "running",
@@ -304,18 +382,30 @@ export class ConversationFold {
       args: init.args,
     };
     cur.activities.push(act);
+    cur.segments.push({ kind: "tool", act });
     cur.liveTool = liveLabel(act);
   }
 
   private finishTool(key: string, preview: string | undefined, isError: boolean): void {
-    const turn = this.currentTurn();
-    if (!turn) return;
-    const act = turn.activities.find((a) => a.key === key);
-    if (act) {
-      act.state = isError ? "error" : "done";
-      if (preview) act.resultPreview = preview;
+    if (!key) return;
+    // current turn first, then a bounded backward scan — a result landing
+    // after turn/end (edge orderings) must still resolve its activity.
+    const turns: TurnItem[] = [];
+    for (let i = this.items.length - 1; i >= 0 && turns.length < 5; i--) {
+      const it = this.items[i];
+      if (it.kind === "turn") turns.push(it);
+    }
+    for (const turn of turns) {
+      const act = turn.activities.find((a) => a.key === key);
+      if (act) {
+        act.state = isError ? "error" : "done";
+        if (preview) act.resultPreview = preview;
+        break;
+      }
     }
     // live indicator: point to the next still-running activity or clear
+    const turn = turns[0];
+    if (!turn) return;
     for (let i = turn.activities.length - 1; i >= 0; i--) {
       const a = turn.activities[i];
       if (a.state === "running") {
@@ -362,8 +452,16 @@ function argsPreview(args: unknown): string {
   }
 }
 
-function resultPreviewOf(result: unknown): string | undefined {
-  if (result === undefined || result === null) return undefined;
+/** Web-GUI producedPaths: only diff cards or kind=edit generic cards carry
+ *  produced locations (reads/deletes never count). */
+function producedPathsFromCallView(view: any): string[] {
+  if (!view || typeof view !== "object") return [];
+  if (view.card !== "diff" && !(view.card === "generic" && view.kind === "edit")) return [];
+  if (!Array.isArray(view.locations)) return [];
+  return view.locations.map((l: any) => l?.path).filter((p: unknown): p is string => typeof p === "string");
+}
+
+function resultPreviewOf(result: unknown): string | undefined {  if (result === undefined || result === null) return undefined;
   try {
     const s = typeof result === "string" ? result : JSON.stringify(result);
     return s.length > 200 ? `${s.slice(0, 200)}…` : s;
@@ -372,9 +470,24 @@ function resultPreviewOf(result: unknown): string | undefined {
   }
 }
 
+/** Wire fact (rc.2 + alpha.5 probed): the tool/result callId can sit at
+ *  data.callId, data.message.source.callId, or
+ *  data.message.content[0].toolCallId — accept all three (loose parsing). */
+function resultCallId(d: any): string {
+  return String(
+    d?.callId ?? d?.toolCallId ?? d?.message?.source?.callId ?? d?.message?.content?.[0]?.toolCallId ?? d?.id ?? "",
+  );
+}
+
 function extractResultPreview(data: any, view: any): string | undefined {
-  // persistent tool/result: {message:{content:[{type:'text',text}]}, meta}
-  const text = data?.message?.content?.[0]?.text ?? data?.content?.[0]?.text;
+  // persistent tool/result nesting (probed): message.content[0] is a
+  // {type:"tool-result", content:[{type:"text",text}]} block — the text
+  // lives one level deeper than the legacy {type:"text",text} shape.
+  const text =
+    data?.message?.content?.[0]?.content?.[0]?.text ??
+    data?.message?.content?.[0]?.text ??
+    data?.content?.[0]?.text ??
+    data?.text;
   if (typeof text === "string" && text) return text.length > 200 ? `${text.slice(0, 200)}…` : text;
   if (view?.card && typeof view.card === "string") {
     return view.card.length > 200 ? `${view.card.slice(0, 200)}…` : view.card;

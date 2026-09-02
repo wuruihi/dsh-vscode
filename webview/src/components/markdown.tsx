@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { DshUi } from "./dshui.js";
+import { CodeBlock } from "./code.js";
 
 /**
  * Assistant markdown renderer with HOST-ALIGNED dsh-ui fence handling.
@@ -155,17 +156,31 @@ function Demote({ as, children }: { as: "h2" | "h3" | "h4" | "h5" | "h5" | "h6";
 
 function makeComponents(): Components {
   return {
-    pre: ({ children }) => <pre className="code-block">{children}</pre>,
+    // Block code: the code component attaches data-lang/data-text; when a
+    // language tag is present we upgrade to the highlighted CodeBlock.
+    // Everything else (no-language fences, inline code) keeps the legacy path.
+    pre: ({ children }) => {
+      const child = Array.isArray(children) ? children[0] : children;
+      const props = (child as { props?: { "data-lang"?: string; "data-text"?: string } })?.props;
+      if (props && typeof props["data-lang"] === "string" && props["data-lang"]) {
+        return <CodeBlock lang={props["data-lang"]} text={props["data-text"] ?? ""} />;
+      }
+      return <pre className="code-block">{children}</pre>;
+    },
     // Defensive tail: the splitter already extracts every dsh-ui fence, but
     // if a well-formed one still reaches react-markdown, render it as UI.
     code: ({ className, children }) => {
-      const lang = /language-(\w[\w-]*)/.exec(className ?? "")?.[1];
+      const lang = /language-(\w[\w+#-]*)/.exec(className ?? "")?.[1];
       const codeText = String(children ?? "");
       if (lang === "dsh-ui") {
         return <DshUi spec={codeText.replace(/\n$/, "")} />;
       }
       if (!className) return <code>{codeText}</code>;
-      return <code className={className}>{codeText}</code>;
+      return (
+        <code className={className} data-lang={lang ?? ""} data-text={codeText}>
+          {codeText}
+        </code>
+      );
     },
     h1: ({ children }) => <Demote as="h2">{children}</Demote>,
     h2: ({ children }) => <Demote as="h3">{children}</Demote>,
