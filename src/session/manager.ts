@@ -368,13 +368,45 @@ export class SessionManager {
   /** ---- workspace-scoped default model ----
    *  Host default for a new session is the GLOBAL last-used model — projects
    *  running in parallel cross-contaminate (A's chats flip to B's model).
-   *  Remember the last model used inside THIS workspace and apply it on
-   *  every new chat here; host default only on first-ever use. */
+   *  Priority on a new chat: PINNED setting (dsh-vscode.defaultModel, in the
+   *  workspace's .vscode/settings.json — deterministic, mistake-proof) >
+   *  last model used inside THIS workspace > host global (first-ever run). */
   private rememberWsModel(cur: { provider: string; model: string; reasoningEffort?: string }): void {
     void this.wsMemento?.update("dsh.lastModel", cur);
   }
 
+  /** Parse the pinned "provider/model[/effort]" setting. Null = unset/malformed. */
+  private pinnedModel(): { provider: string; model: string; reasoningEffort?: string } | null {
+    const raw = vscode.workspace.getConfiguration("dsh-vscode").get<string>("defaultModel", "").trim();
+    if (!raw) return null;
+    const parts = raw.split("/").map((p) => p.trim()).filter(Boolean);
+    if (parts.length < 2) {
+      this.host.post({ t: "notify", kind: "warn", message: `dsh-vscode.defaultModel 格式应为 "provider/model"（当前："${raw}"），已忽略` });
+      return null;
+    }
+    return { provider: parts[0], model: parts.slice(1, -1).join("/") || parts[1], ...(parts.length >= 3 ? { reasoningEffort: parts[parts.length - 1] } : {}) };
+  }
+
   private async applyWsDefaultModel(sessionId: string): Promise<void> {
+    // 1) pinned setting (deterministic per-project default)
+    const pin = this.pinnedModel();
+    if (pin) {
+      try {
+        await this.lifecycle.client.call("session.selectModel", {
+          sessionId,
+          provider: pin.provider,
+          model: pin.model,
+          ...(pin.reasoningEffort ? { reasoningEffort: pin.reasoningEffort } : {}),
+        });
+        this.host.post({ t: "notify", kind: "info", message: `已应用本项目默认模型：${pin.provider}/${pin.model}` });
+        return;
+      } catch (err) {
+        // Pinned is user-authored config: do NOT auto-clear — warn and fall
+        // through to the last-used memory instead.
+        this.host.post({ t: "notify", kind: "warn", message: `本项目默认模型 ${pin.provider}/${pin.model} 应用失败（${String(err).slice(0, 80)}），本次退回最近使用模型` });
+      }
+    }
+    // 2) workspace last-used memory
     const cur = this.wsMemento?.get<{ provider: string; model: string; reasoningEffort?: string }>("dsh.lastModel");
     if (!cur?.provider || !cur.model) return;
     try {

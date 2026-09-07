@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.0 — 项目级钉死默认模型（provider/model）
+
+- **需求**：宿主新会话默认=全局最近使用模型，跨项目串味（公司项目开新会话拿到个人付费模型，烧个人额度）。v0.5.2 的工作区"最近使用"记忆挡了大部分，但有两个口子：首次无记忆回落宿主全局；误操作一次污染记忆
+- **新设置 `dsh-vscode.defaultModel`**：格式 `"provider/model"`（可选第三段 reasoningEffort），写在各项目的 `.vscode/settings.json` 即天然按项目隔离（公司项目钉公司 provider，个人项目钉个人 provider）。新会话应用优先级：**钉死设置 > 本项目最近使用 > 宿主全局**
+- 钉死应用成功弹 info 确认（"已应用本项目默认模型：provider/model"）；应用失败（模型下线/写错）弹 warn 并退回最近使用，**不清除设置**（用户手写的配置不自动删）；格式错误弹 warn 忽略
+- 注意：仅覆盖插件内新建会话；DSH GUI 里建的会话仍走宿主全局逻辑（上游能力，本地不 patch 宿主）
+
 ## v0.17.0 — 工作区分组管理（P2 主任务收官）
 
 - **真数据源切换**：工作区 Sheet 从「按 cwd 假分组」升级为**服务器真实工作区**（workspace/follow 快照基线，实测拿到 D:\bywork 等真实分组与成员）；未收录进任何工作区的会话落入「未分组」
@@ -105,6 +112,15 @@
 - **`client.ts` 重写为 flavor 路由**：全部端点改名/参数适配收在一张表里。**实测坑（alpha.4 实机）**：args 必须逐参数精确匹配——单 request 方法包 `{request:{…}}`、`session/list` 要 `_request:{}`、`agent` 参数 wire 名 `agentId`、`commands/execute` 的 `images` 必填传 `[]`、流开帧同样包装（`session/follow` → `{request:{address}}`）。竞品 apiClient 平铺传参，在真实 alpha.4 上会被网关拒绝——未照抄
 - **验证**：legacy 链路 smoke 11/11（rc.2 实机 3080）；v012 链路 smoke 12/12（alpha.4 隔离实例 `DSH_HOME=%TEMP%` 3081，含探测/鉴权/remote.mux/$events/workspace 流/session 全链/分页快照/prompt 流式/turn end）；fence 8/8 + repair 14/14（渲染护城河零改动）
 - 附带：竞品分析 `docs/competitor-analysis.md` + 路线图 `docs/roadmap.md`（Phase 1 视觉对齐 → Phase 2 特性 → Phase 3/4 大项）
+
+## v0.5.13 — 项目级钉死默认模型（provider/model）
+
+（注：本特性实际随 v0.18.0 发布——0.5.13 开发期间并行会话已推进至 0.17.0，版本号让路）
+
+- **需求**：宿主新会话默认=全局最近使用模型，跨项目串味（公司项目开新会话拿到个人付费模型，烧个人额度）。v0.5.2 的工作区"最近使用"记忆挡了大部分，但有两个口子：首次无记忆回落宿主全局；误操作一次污染记忆
+- **新设置 `dsh-vscode.defaultModel`**：格式 `"provider/model"`（可选第三段 reasoningEffort），写在各项目的 `.vscode/settings.json` 即天然按项目隔离（公司项目钉公司 provider，个人项目钉个人 provider）。新会话应用优先级：**钉死设置 > 本项目最近使用 > 宿主全局**
+- 钉死应用成功弹 info 确认（"已应用本项目默认模型：provider/model"）；应用失败（模型下线/写错）弹 warn 并退回最近使用，**不清除设置**（用户手写的配置不自动删）；格式错误弹 warn 忽略
+- 注意：仅覆盖插件内新建会话；DSH GUI 里建的会话仍走宿主全局逻辑（上游能力，本地不 patch 宿主）
 
 ## v0.5.12 — badcase 7：裸组件根且丢 type，字段签名推断补壳
 

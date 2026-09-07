@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -102,6 +102,11 @@
           "type": "string",
           "default": "C:\\Users\\wurui\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
           "description": "Path to the installed dsh CLI bin.js used when starting dsh web."
+        },
+        "dsh-vscode.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Pinned default model for THIS project's new chats. Format: \"provider/model\" (optionally \"provider/model/reasoningEffort\"). Overrides the workspace last-used memory and the host's global last-used default. Set it in the workspace settings (.vscode/settings.json) so company projects pin company models and personal projects pin personal ones. Example: \"comleader/glm-5.3-flash\"."
         }
       }
     }
