@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const ts = require(path.join("D:/repos/dsh-vscode/node_modules/typescript/lib/typescript.js"));
-const src = fs.readFileSync("D:/repos/dsh-vscode/webview/src/components/Markdown.tsx", "utf8");
+const ROOT = path.join(__dirname, ".."); // move-proof (repo relocated 2026-09-07)
+const ts = require(path.join(ROOT, "node_modules/typescript/lib/typescript.js"));
+const src = fs.readFileSync(path.join(ROOT, "webview/src/components/Markdown.tsx"), "utf8");
 const fnSplit = /function splitDshUiSegments[\s\S]*?\n\}/.exec(src)[0];
 const fnStart = /function specStart[\s\S]*?\n\}/.exec(src)[0];
 const fnBal = /function balancedEnd[\s\S]*?\n\}/.exec(src)[0];

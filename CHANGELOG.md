@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.1 — 底栏缓存命中率（GUI 对齐）+ 输入口径修正
+
+- **缓存命中百分比**：底栏 token 统计行新增 `缓存命中 88%`，公式 = cacheReadTokens / (cacheReadTokens + uncachedInputTokens)。公式与口径全部实证校准：本体 GUI 底栏渲染 `缓存命中 91% | 输入 3.7M tok · 输出 58.1K tok`（browser-act 实读）+ 实时 wire 快照 tokenUsage={uncached:487647, cacheRead:3560960, output:69909} 反推 88.0% 一致
+- **输入口径修正（顺手 bug）**：旧代码"输入"显示的是 uncachedInputTokens（仅未命中部分，如 487K），本体显示的是总输入（cached+uncached，如 4.0M）——量级差 ~8 倍，已对齐为总输入
+- **紧凑格式**：token 数显示 K/M 缩写（4.0M tok），与本体一致；零值不显示（新会话底栏不出现"缓存命中 NaN%"）
+- 排查路径存档：宿主 0.1.2 鉴权（token→cookie）后 /api/events.mux 废弃、改单 /api/remote.mux 流端点；RPC 斜杠端点 + {args:{_request:{}}} 包装；usage 原始块 {inputTokens, outputTokens, totalTokens, cacheReadTokens}
+
 ## v0.18.0 — 项目级钉死默认模型（provider/model）
 
 - **需求**：宿主新会话默认=全局最近使用模型，跨项目串味（公司项目开新会话拿到个人付费模型，烧个人额度）。v0.5.2 的工作区"最近使用"记忆挡了大部分，但有两个口子：首次无记忆回落宿主全局；误操作一次污染记忆

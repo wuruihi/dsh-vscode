@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const ts = require(path.join("D:/repos/dsh-vscode/node_modules/typescript/lib/typescript.js"));
-const src = fs.readFileSync("D:/repos/dsh-vscode/webview/src/components/dshui.tsx", "utf8");
+const ROOT = path.join(__dirname, ".."); // move-proof (repo relocated 2026-09-07)
+const ts = require(path.join(ROOT, "node_modules/typescript/lib/typescript.js"));
+const src = fs.readFileSync(path.join(ROOT, "webview/src/components/dshui.tsx"), "utf8");
 const body = src.slice(src.indexOf("type Node"), src.indexOf("export function DshUi"));
 const js = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
 const parseSpec = new Function(`${js}\nreturn parseSpec;`)();

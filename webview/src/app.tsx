@@ -235,11 +235,21 @@ export function App() {
           // was a real cross-session contamination bug.
           if (m.sessionId !== current) break;
           if (m.key === "tokenUsage" || m.key === "liveTokenUsage") {
+            // GUI-parity stats (verified against dsh web dock + live wire):
+            // tokenUsage = {uncachedInputTokens, outputTokens, cacheReadTokens,
+            // cacheWriteTokens}. 输入 = TOTAL input (cached + uncached); the old
+            // code showed uncached only (487K vs the GUI's 4.0M — wrong scale).
+            // 缓存命中% = cacheRead / (cacheRead + uncached).
             const v = (m.value ?? {}) as Record<string, number>;
+            const cr = Number(v.cacheReadTokens) || 0;
+            const unc = Number(v.uncachedInputTokens) || 0;
+            const inTotal = cr + unc;
+            const out = Number(v.outputTokens) || 0;
+            const fmtTok = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : `${n}`);
             const parts: string[] = [];
-            if (v.outputTokens != null) parts.push(`输出 ${v.outputTokens}`);
-            if (v.uncachedInputTokens != null) parts.push(`输入 ${v.uncachedInputTokens}`);
-            if (v.cacheReadTokens != null) parts.push(`缓存命中 ${v.cacheReadTokens}`);
+            if (inTotal > 0) parts.push(`缓存命中 ${Math.round((100 * cr) / inTotal)}%`);
+            if (inTotal > 0) parts.push(`输入 ${fmtTok(inTotal)} tok`);
+            if (out > 0) parts.push(`输出 ${fmtTok(out)} tok`);
             setTokens(parts.join(" · "));
           } else if (m.key === "contextPressure" && m.value != null) {
             const v = m.value as any;
