@@ -10,3 +10,14 @@ tsconfig.*.json
 !README.md
 dist/*.map
 dist/extension.js
+# dev-only: package-manager metadata, local state, probe junk — never ship.
+# (v0.18.2 shipped 4 stray tmp-*.mjs probes and v0.18.3 three empty _tmp_* files
+#  plus pnpm-lock/memory/.dsh snapshots: nothing here belongs in the extension.)
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.gitignore
+.dsh/**
+memory/**
+tmp-*
+_tmp_*
+*.vsix

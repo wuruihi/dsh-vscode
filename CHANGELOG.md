@@ -4,6 +4,15 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.3 — 模型芯片说谎修复：显示会话真实模型 + 新建会话用「本项目最近使用」
+
+- **现象**（用户报）：在插件里把模型切到 DeepSeek v4.1 Flash，芯片也显示 v4.1，但该会话每次请求实际跑的还是 glm-5.3 ——「会话中间切换模型不生效？」
+- **根因（插件的显示缺陷，不是宿主机制问题）**：面板芯片读的是 `session.models` → 宿主 `session/modelCatalog` 的 **`default`（全局默认模型）**，那是"新会话起始模型"、全项目共享；**已存在的会话有它自己的模型**。实证：会话 `session-d75a304a`（洛阳案件分析）快照 projection `modelSelection={"lastUsed":comleader/glm-5.3,"next":comleader/glm-5.3}`、尾部 315 条记录里 `model/selection` 事件 **0 条** → 该会话从未切换过；而 catalog.default 是 deepseek-v4.1-flash → 芯片谎报。宿主机制本身正常：`session/selectModel` 会 append `model/selection` 事件并 `selectForNextRequest`（下次请求生效）
+- **修法 1（芯片说真话）**：改读宿主 `modelSelection` 投影（`next` 优先——待生效切换立刻可见，回退 `lastUsed`），经 `session/projection` 通道下发（seed 于历史加载 + 实时推送），按 **sessionId 建映射**存放：不受"载荷早于会话列表到达"的竞态影响，也不会被他会话推送覆盖
+- **修法 2（新建会话默认）**：工作区"最近使用模型"记忆改为记录**会话真实模型**（原来记的是全局默认，等于把宿主全局串进项目记忆）。仅记本工作区、非空白、**非子代理**会话；**不钉死任何模型**——新会话默认 = 本项目最近使用的模型，优先级 钉死设置(默认留空) > 本项目最近使用 > 宿主默认
+- **修法 3（顺手的 UX 洞）**：面板没有当前会话时点模型/推理强度选择器，原来是 `current && post(...)` **静默丢弃**（看不清为什么没反应）→ 改为面板提示"请先选择或新建一个会话"；切换成功用**宿主归一化返回值**回填芯片与记忆，不再用请求值（防止显示与实际请求漂移）
+- **验证**：新增 `scripts/model-regress.cjs` **23/23**（真实 projection 载荷、pending 切换优先、catalog 形状永不冒充会话模型、钉死解析、跨项目不继承）；repair 14/14 + fence 8/8 + fold 17/17；`pnpm compile` 双 tsconfig 通过
+
 ## v0.18.2 — 回放正文丢失修复（assistant/message content 是数组，旧代码按字符串读）
 
 - **现象**：插件打开已结束会话，只显示到「第N轮 · 步骤5」的工具/步骤记录，**正文整段不见**；本体同样会话能看到完整回答（用户报「洛阳案件分析模块需求分析」，末尾应显示到「以上」）

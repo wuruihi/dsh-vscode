@@ -79,6 +79,13 @@ export function App() {
   const [approvals, setApprovals] = useState<ApprovalCard[]>([]);
   const [questions, setQuestions] = useState<QuestionCard[]>([]);
   const [models, setModels] = useState<ModelsData | undefined>();
+  /** sessionId → that session's OWN model, from the host's modelSelection
+   *  projection. `models.current` is the host-wide catalog default (the model a
+   *  NEW chat starts on) — showing it as "the session's model" was a lie: a
+   *  session running glm-5.3 displayed the global default, which read as "my
+   *  model switch didn't take effect". Keyed by session so it needs no reset on
+   *  switch and cannot be overwritten by a foreign session's push. */
+  const [sessionModels, setSessionModels] = useState<Record<string, { provider: string; model: string; reasoningEffort?: string }>>({});
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
   const [queueEditText, setQueueEditText] = useState("");
@@ -203,6 +210,12 @@ export function App() {
           setQuestions((q) => q.filter((x) => x.rpcId !== m.rpcId));
           break;
         case "models":
+          // Session-scoped: a payload fetched for a session that is no longer
+          // on screen must not decide this panel's chip. `!current` means the
+          // list message has not been processed yet (the handler only
+          // re-registers on the next render) — take that one, or the very first
+          // chip would stay empty.
+          if (current && m.sessionId !== current) break;
           setModels(m.data);
           break;
         case "permission":
@@ -229,6 +242,15 @@ export function App() {
           setQueue(m.items);
           break;
         case "projection":
+          // The resolved session model is keyed by session, so accept it before
+          // the panel guard: it must survive arriving before the session list
+          // message is rendered (no lost first chip value) and can never leak
+          // into another session's chip.
+          if (m.key === "currentModel") {
+            const value = m.value as { provider: string; model: string; reasoningEffort?: string } | null;
+            if (value?.provider && value?.model) setSessionModels((s) => ({ ...s, [m.sessionId]: value }));
+            break;
+          }
           // Session-scoped UI state must never leak across sessions: pushes
           // arrive for EVERY session (background runs included) — a foreign
           // todo list / plan banner / token readout overwriting this panel
@@ -439,6 +461,22 @@ export function App() {
       post({ t: "run-command", sessionId: current, line: `/${it.name}` });
     }
   };
+
+  /** Panel notice (in-panel toast, auto-dismiss) — used when an action cannot
+   *  run at all, so it never fails silently. */
+  const notice = (message: string): void => {
+    setNotify({ kind: "warn", message });
+    window.setTimeout(() => setNotify(undefined), 4000);
+  };
+
+  /** Chip model source: the session's OWN model once the host has told us
+   *  (modelSelection projection); the catalog default only as a fallback for a
+   *  session that has not answered yet. */
+  const sessionModel = current ? sessionModels[current] : undefined;
+  const chipModels = useMemo(
+    () => (models && sessionModel ? { ...models, current: sessionModel } : models),
+    [models, sessionModel],
+  );
 
   /** Pick a file from the popup: strip the @token, add an attachment chip. */
   const pickFile = (f: { path: string; rel: string }): void => {
@@ -1425,14 +1463,21 @@ export function App() {
             {mode === "queue" ? "排队" : "引导"}
           </button>
           <ModelPicker
-            models={models}
-            onSelect={(p, m) => current && post({ t: "select-model", sessionId: current, provider: p, model: m })}
+            models={chipModels}
+            onSelect={(p, m) => {
+              // Never drop the click silently: with no active session there is
+              // nothing to switch, and that used to look like "the switch did
+              // not work" (real report, 2026-09-11).
+              if (!current) return notice("请先选择或新建一个会话，再切换模型");
+              post({ t: "select-model", sessionId: current, provider: p, model: m });
+            }}
           />
           <EffortPicker
-            models={models}
+            models={chipModels}
             onSelect={(effort) => {
-              const cur = models?.current;
-              if (cur && current) post({ t: "select-model", sessionId: current, provider: cur.provider, model: cur.model, reasoningEffort: effort });
+              const cur = chipModels?.current;
+              if (!current) return notice("请先选择或新建一个会话，再调整推理强度");
+              if (cur) post({ t: "select-model", sessionId: current, provider: cur.provider, model: cur.model, reasoningEffort: effort });
             }}
           />
           {permission && permission.presets.length > 0 && (

@@ -9,6 +9,7 @@ import { DshLifecycle } from "../connection/lifecycle.js";
 import { warn } from "../log.js";
 import type { DiffService } from "../diff/provider.js";
 import { resolveWorkspace, normalizePath } from "./workspace.js";
+import { parsePinnedModel, pickChatDefault, realModelOf, type ModelChoice } from "./model-choice.js";
 import type {
   ApprovalCard,
   ExtToView,
@@ -54,6 +55,10 @@ export class SessionManager {
   private questionSig = new Map<string, string>();
   private diff: DiffService | undefined;
   private titleCache = new Map<string, string>();
+  /** sessionId → the model THAT session is set to use (from the host's
+   *  modelSelection projection). Kept so the panel never has to guess from the
+   *  host-wide catalog default, which is shared across projects. */
+  private sessionModel = new Map<string, ModelChoice>();
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
   private enrichInFlight = false;
 
@@ -292,6 +297,11 @@ export class SessionManager {
       this.host.post({ t: "projection", sessionId, key: "plan", value: pv.plan ?? { active: false } });
       this.host.post({ t: "projection", sessionId, key: "todos", value: pv.todos ?? null });
       this.host.post({ t: "projection", sessionId, key: "goal", value: pv.goal ?? null });
+      // The session's OWN model (host projection): the chip must show what this
+      // session runs, not the host-wide catalog default. Also feeds this
+      // workspace's "last model used here" memory for new chats.
+      this.noteSessionModel(sessionId, pv.modelSelection);
+      this.postCurrentModel(sessionId, pv.modelSelection);
     } catch (err) {
       warn(`[manager] history failed: ${String(err)}`);
       this.host.post({ t: "history", sessionId, entries: [], hasMore: false });
@@ -353,13 +363,15 @@ export class SessionManager {
   async refreshModels(sessionId: string): Promise<void> {
     try {
       const data = await this.lifecycle.client.call<ModelsData>("session.models", { sessionId });
+      // `session/models` reports the host-wide catalog default — the model a
+      // NEW chat starts on, shared by every project. An EXISTING session keeps
+      // its own model, so displaying the catalog default here was a lie: a
+      // session running glm-5.3 showed the global default (real bug
+      // 2026-09-11 — it read as "my switch didn't apply"). Prefer the session's
+      // own model when the modelSelection projection has told us what it is.
+      const real = this.sessionModel.get(sessionId);
+      if (real) data.current = real;
       this.host.post({ t: "models", sessionId, data });
-      // Workspace-scoped model memory: record what a REAL (non-blank) session
-      // of this project runs, so new chats default within the project.
-      const row = this.sessionRows.find((r) => r.sessionId === sessionId);
-      if (data?.current?.model && row && !row.blank && row.cwd && sameDir(row.cwd)) {
-        this.rememberWsModel(data.current);
-      }
     } catch (err) {
       warn(`[manager] models failed: ${String(err)}`);
     }
@@ -375,48 +387,68 @@ export class SessionManager {
     void this.wsMemento?.update("dsh.lastModel", cur);
   }
 
+  /** Record a session's OWN model (from the host's modelSelection projection):
+   *  cache it for the chip, and — only for a real session of THIS workspace —
+   *  make it this project's "last model used", which new chats inherit.
+   *  Blank sessions and other workspaces are ignored so projects never leak
+   *  into each other (the whole point of the workspace-scoped memory). */
+  private noteSessionModel(sessionId: string, modelSelection: unknown): void {
+    const real = realModelOf(modelSelection);
+    if (!real) return;
+    this.sessionModel.set(sessionId, real);
+    const row = this.sessionRows.find((r) => r.sessionId === sessionId);
+    // Subagent children can run a different model; they must not become the
+    // project's "last model used" for the user's own new chats.
+    if (!row || row.blank || row.origin === "subagent" || !row.cwd || !sameDir(row.cwd)) return;
+    this.rememberWsModel(real);
+  }
+
+  /** Push the session's resolved model to the panel (chip + effort picker). */
+  private postCurrentModel(sessionId: string, modelSelection: unknown): void {
+    this.host.post({ t: "projection", sessionId, key: "currentModel", value: realModelOf(modelSelection) ?? null });
+  }
+
   /** Parse the pinned "provider/model[/effort]" setting. Null = unset/malformed. */
-  private pinnedModel(): { provider: string; model: string; reasoningEffort?: string } | null {
-    const raw = vscode.workspace.getConfiguration("dsh-vscode").get<string>("defaultModel", "").trim();
-    if (!raw) return null;
-    const parts = raw.split("/").map((p) => p.trim()).filter(Boolean);
-    if (parts.length < 2) {
-      this.host.post({ t: "notify", kind: "warn", message: `dsh-vscode.defaultModel 格式应为 "provider/model"（当前："${raw}"），已忽略` });
+  private pinnedModel(): ModelChoice | null {
+    const raw = vscode.workspace.getConfiguration("dsh-vscode").get<string>("defaultModel", "");
+    const { choice, malformed } = parsePinnedModel(raw);
+    if (malformed) {
+      this.host.post({ t: "notify", kind: "warn", message: `dsh-vscode.defaultModel 格式应为 "provider/model"（当前："${malformed}"），已忽略` });
       return null;
     }
-    return { provider: parts[0], model: parts.slice(1, -1).join("/") || parts[1], ...(parts.length >= 3 ? { reasoningEffort: parts[parts.length - 1] } : {}) };
+    return choice ?? null;
   }
 
   private async applyWsDefaultModel(sessionId: string): Promise<void> {
-    // 1) pinned setting (deterministic per-project default)
+    // 1) pinned setting (deterministic per-project default; unset by default)
     const pin = this.pinnedModel();
-    if (pin) {
-      try {
-        await this.lifecycle.client.call("session.selectModel", {
-          sessionId,
-          provider: pin.provider,
-          model: pin.model,
-          ...(pin.reasoningEffort ? { reasoningEffort: pin.reasoningEffort } : {}),
-        });
-        this.host.post({ t: "notify", kind: "info", message: `已应用本项目默认模型：${pin.provider}/${pin.model}` });
-        return;
-      } catch (err) {
-        // Pinned is user-authored config: do NOT auto-clear — warn and fall
-        // through to the last-used memory instead.
-        this.host.post({ t: "notify", kind: "warn", message: `本项目默认模型 ${pin.provider}/${pin.model} 应用失败（${String(err).slice(0, 80)}），本次退回最近使用模型` });
-      }
-    }
-    // 2) workspace last-used memory
-    const cur = this.wsMemento?.get<{ provider: string; model: string; reasoningEffort?: string }>("dsh.lastModel");
-    if (!cur?.provider || !cur.model) return;
+    // 2) this workspace's own last-used model (never the host-wide default:
+    //    another project's chat must not decide this project's model)
+    const wsLast = this.wsMemento?.get<{ provider: string; model: string; reasoningEffort?: string }>("dsh.lastModel");
+    const target = pickChatDefault(pin, wsLast);
+    if (!target) return; // first-ever chat here: let the host decide
+    // A pin that the host rejects must not be silently replaced by memory —
+    // warn and stop; a stale last-used memory is dropped so the host can rule.
+    const fromPin = pin?.provider === target.provider && pin?.model === target.model;
     try {
-      await this.lifecycle.client.call("session.selectModel", {
+      const res = await this.lifecycle.client.call<{ selected?: ModelChoice }>("session.selectModel", {
         sessionId,
-        provider: cur.provider,
-        model: cur.model,
-        ...(cur.reasoningEffort ? { reasoningEffort: cur.reasoningEffort } : {}),
+        provider: target.provider,
+        model: target.model,
+        ...(target.reasoningEffort ? { reasoningEffort: target.reasoningEffort } : {}),
       });
+      const applied = res?.selected ?? target;
+      this.sessionModel.set(sessionId, applied);
+      this.postCurrentModel(sessionId, { next: applied, lastUsed: applied });
+      if (fromPin) {
+        this.host.post({ t: "notify", kind: "info", message: `已应用本项目默认模型：${applied.provider}/${applied.model}` });
+      }
     } catch (err) {
+      if (fromPin) {
+        // User-authored config: never auto-clear — warn and stop.
+        this.host.post({ t: "notify", kind: "warn", message: `本项目默认模型 ${target.provider}/${target.model} 应用失败（${String(err).slice(0, 80)}）` });
+        return;
+      }
       // Stale memory (model/provider since removed): drop it, host default rules.
       warn(`[manager] ws default model apply failed (${String(err)}) — clearing memory`);
       void this.wsMemento?.update("dsh.lastModel", undefined);
@@ -605,15 +637,21 @@ export class SessionManager {
 
   async selectModel(sessionId: string, provider: string, model: string, reasoningEffort?: string): Promise<void> {
     try {
-      await this.lifecycle.client.call("session.selectModel", {
+      // The host normalises the choice (resolveCallConfig) — echo ITS value,
+      // not the requested one, so the chip/memory can never drift from what the
+      // session will actually request next.
+      const res = await this.lifecycle.client.call<{ selected?: ModelChoice }>("session.selectModel", {
         sessionId,
         provider,
         model,
         ...(reasoningEffort ? { reasoningEffort } : {}),
       });
-      this.rememberWsModel({ provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) });
+      const selected: ModelChoice = res?.selected ?? { provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) };
+      this.rememberWsModel(selected);
+      this.sessionModel.set(sessionId, selected);
+      this.postCurrentModel(sessionId, { next: selected, lastUsed: selected });
       await this.refreshModels(sessionId);
-      this.host.post({ t: "notify", kind: "info", message: `模型已切换：${model}` });
+      this.host.post({ t: "notify", kind: "info", message: `模型已切换：${selected.model}` });
     } catch (err) {
       this.host.post({ t: "notify", kind: "error", message: `切换模型失败：${errText(err)}` });
       await this.refreshModels(sessionId);
@@ -860,8 +898,13 @@ export class SessionManager {
       // Title is the one cross-session projection we keep: it feeds the
       // session-list cache for THIS workspace's rows.
       if (payload.key !== "title") {
+        // modelSelection is remembered for EVERY session of this workspace (the
+        // project's "last model used" must follow the newest session, not only
+        // the one on screen), but only the current session paints the panel.
+        if (payload.key === "modelSelection") this.noteSessionModel(sid, payload.value);
         if (sid !== this.currentSession) return;
         this.host.post({ t: "projection", sessionId: sid, key: payload.key, value: payload.value });
+        if (payload.key === "modelSelection") this.postCurrentModel(sid, payload.value);
         if (payload.key === "permissions") {
           const perm = payload.value;
           const value = typeof perm?.currentValue === "string" ? perm.currentValue : null;
