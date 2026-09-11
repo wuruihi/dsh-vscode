@@ -130,5 +130,77 @@ fold2.pushMany([
 const t2 = fold2.items.find((i) => i.kind === "turn");
 ok("legacy top-level result shape resolves + error state", t2.activities[0]?.state === "error");
 
+// 6. REPLAY-SHAPE PROSE (badcase): assistant/message carries content as an
+//    ARRAY of blocks; text-delta chunks are NOT persisted, so prose arrives
+//    only here. The old fold read `content` as a string and dropped every
+//    replayed answer — the panel showed tool steps with no text at all.
+//    Verbatim tail of "洛阳案件分析模块需求分析" (session-d75a304a), 254 chars.
+const FINAL_TEXT = `规则已更新完毕：
+
+- \`rules_demo\` §4 重写为 **filter-table 两行表格式**：搜索条件行（文本输入类）/ 更多筛选行（时间/下拉/级联/范围类），全部平铺不用折叠，操作按钮放 \`.filter-table-actions\`；旧 filter-row 展开收起式标注为仅存量页面保留
+- frontmatter description 同步（“筛选展开收起”→“筛选filter-table两行式”）
+- 当日日志已记
+
+此后所有新 demo 页面默认按这个筛选样式走。
+
+以上`;
+
+const replay = new ConversationFold();
+replay.pushMany([
+  ev("turn/start", { turn: 19, step: 5 }),
+  ev("assistant/message", { turn: 19, step: 5, message: { content: [{ type: "reasoning", text: "先读规则文件" }, { type: "tool-call", toolName: "edit" }] } }),
+  ev("tool/call", { turn: 19, step: 5, callId: "call_replay", name: "edit", arguments: '{"file_path":"memory/2026-09-08.md"}' }),
+  ev("tool/result", { turn: 19, step: 5, callId: "call_replay" }),
+  ev("step/end", { turn: 19, step: 5 }),
+  ev("assistant/message", { turn: 19, step: 5, message: { content: [{ type: "text", text: FINAL_TEXT }] } }),
+  ev("turn/end", { turn: 19 }),
+]);
+const rt = replay.items.filter((i) => i.kind === "turn")[0];
+ok("replayed array-content prose renders (badcase)", rt.text.includes("规则已更新完毕"));
+ok("replayed reply keeps its tail (…以上)", rt.text.trimEnd().endsWith("以上"));
+ok("replayed reasoning block also renders", rt.thinking.includes("先读规则文件"));
+ok("tool-call block not duplicated as text", !rt.text.includes("toolName"));
+
+// 7. live deltas + the completed message for the SAME step: one copy only
+const live = new ConversationFold();
+live.pushMany([
+  ev("turn/start", { turn: 1, step: 1 }),
+  ev("assistant/chunk", { turn: 1, step: 1, chunk: { type: "text-delta", text: "规则已更新" } }),
+  ev("assistant/chunk", { turn: 1, step: 1, chunk: { type: "text-delta", text: "完毕：" } }),
+  ev("assistant/message", { turn: 1, step: 1, message: { content: [{ type: "text", text: "规则已更新完毕：" }] } }),
+  ev("turn/end", { turn: 1 }),
+]);
+ok("live deltas + message do not double the prose", live.items.find((i) => i.kind === "turn").text === "规则已更新完毕：");
+
+// 8. identical text in DIFFERENT steps is legitimate and must survive
+const rep = new ConversationFold();
+rep.pushMany([
+  ev("turn/start", { turn: 1, step: 1 }),
+  ev("assistant/message", { turn: 1, step: 1, message: { content: [{ type: "text", text: "好的。" }] } }),
+  ev("assistant/message", { turn: 1, step: 2, message: { content: [{ type: "text", text: "好的。" }] } }),
+  ev("turn/end", { turn: 1 }),
+]);
+ok("repeated text across steps kept", rep.items.find((i) => i.kind === "turn").text === "好的。好的。");
+
+// 9. interleaving preserved when prose comes from messages, not deltas
+const mix = new ConversationFold();
+mix.pushMany([
+  ev("turn/start", { turn: 1, step: 1 }),
+  ev("assistant/message", { turn: 1, step: 1, message: { content: [{ type: "text", text: "甲" }] } }),
+  ev("tool/call", { turn: 1, step: 2, callId: "c1", name: "pwsh", arguments: '{"command":"ls"}' }),
+  ev("assistant/message", { turn: 1, step: 3, message: { content: [{ type: "text", text: "乙" }] } }),
+  ev("turn/end", { turn: 1 }),
+]);
+ok("message-prose interleaves with tools", mix.items.find((i) => i.kind === "turn").segments.map((s) => s.kind).join(">") === "text>tool>text");
+
+// 10. legacy string-form message still renders (old hosts)
+const str = new ConversationFold();
+str.pushMany([
+  ev("turn/start", { turn: 1, step: 1 }),
+  ev("assistant/message", { turn: 1, step: 1, message: { content: "纯文本" } }),
+  ev("turn/end", { turn: 1 }),
+]);
+ok("string-form message still renders", str.items.find((i) => i.kind === "turn").text === "纯文本");
+
 console.log(fails.length === 0 ? `\n${passed}/${passed} passed` : `\nFAILED: ${fails.length}`);
 process.exit(fails.length === 0 ? 0 : 1);

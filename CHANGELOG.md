@@ -4,6 +4,13 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.2 — 回放正文丢失修复（assistant/message content 是数组，旧代码按字符串读）
+
+- **现象**：插件打开已结束会话，只显示到「第N轮 · 步骤5」的工具/步骤记录，**正文整段不见**；本体同样会话能看到完整回答（用户报「洛阳案件分析模块需求分析」，末尾应显示到「以上」）
+- **根因**：历史回放（session/follow 快照、session/page）里助手正文以**完整消息** `assistant/message` 到达，`data.message.content` 是**块数组** `[{type:"reasoning"|"text"|"tool-call"}]`；旧代码 `const mt = typeof m === "string" ? m : m?.content` 取出的数组过不了 `typeof mt === "string"` —— 且历史中 text-delta 不落盘（正文只此一路），于是**每次回放都是零正文**。实测该会话末轮 254 字回答（结尾「以上」）100% 丢失
+- **修法**：按块数组处理——text→正文段、reasoning→思考段（tool-call 跳过，宿主紧跟独立 tool/call 事件）；用「本 step 是否已有实时流」(`turn:step` 键集合) 精确去重，实时 delta + 完成消息不再重复、也不误杀跨 step 的合法重复文本；reset 清空；字符串旧形态保留兼容
+- **验证**：真实 30 条记录（65KB 原样 fixture）灌入 fold → 254 字全文 + 结尾「以上」在；fold-regress 扩到 17/17（含 badcase 逐字、去重、跨 step 重复保留、交错顺序、旧形态兼容）；repair 14/14 + fence 8/8
+
 ## v0.18.1 — 底栏缓存命中率（GUI 对齐）+ 输入口径修正
 
 - **缓存命中百分比**：底栏 token 统计行新增 `缓存命中 88%`，公式 = cacheReadTokens / (cacheReadTokens + uncachedInputTokens)。公式与口径全部实证校准：本体 GUI 底栏渲染 `缓存命中 91% | 输入 3.7M tok · 输出 58.1K tok`（browser-act 实读）+ 实时 wire 快照 tokenUsage={uncached:487647, cacheRead:3560960, output:69909} 反推 88.0% 一致

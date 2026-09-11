@@ -84,6 +84,11 @@ export class ConversationFold {
   private firstSeq = -1;
   private turnCounter = 0;
   private running = false;
+  /** step keys ("turn:step") whose prose already arrived as live deltas —
+   *  lets the completed assistant/message (same text) be skipped without
+   *  dropping genuinely repeated text. */
+  private streamedText = new Set<string>();
+  private streamedThinking = new Set<string>();
 
   get seq(): number {
     return this.lastSeq;
@@ -160,7 +165,16 @@ export class ConversationFold {
         break;
       }
       case "assistant/chunk": {
-        this.applyChunk(ev.data?.chunk, view);
+        const d = ev.data ?? {};
+        const chunk = d.chunk;
+        // Remember which steps streamed their prose live: the completed
+        // assistant/message that follows carries the SAME text, and replay
+        // (history) carries it ONLY there. Per-step keys dedupe the two
+        // representations without ever dropping legitimately repeated text.
+        const stepKey = `${d.turn ?? "?"}:${d.step ?? "?"}`;
+        if (chunk?.type === "text-delta") this.streamedText.add(stepKey);
+        else if (chunk?.type === "reasoning-delta") this.streamedThinking.add(stepKey);
+        this.applyChunk(chunk, view);
         break;
       }
       // History replay (session/page) compacts text/reasoning deltas into
@@ -179,12 +193,35 @@ export class ConversationFold {
         break;
       }
       case "assistant/message": {
-        // Degradation path: some versions put the full message here.
-        const cur = this.currentTurn();
-        if (cur && !cur.text) {
-          const m = ev.data?.message ?? ev.data?.content ?? ev.data;
-          const mt = typeof m === "string" ? m : m?.content;
-          if (typeof mt === "string") cur.text = stripSystemContext(mt);
+        // COMPLETE assistant message — the replay shape (session/follow
+        // snapshot, session/page): data.message.content = [{type:"reasoning"|
+        // "text"|"tool-call"}]. Persisted history carries NO text-delta chunks,
+        // so prose arrives ONLY here: the old code read `content` as a string
+        // (typeof === "string" never true for an array) and silently dropped
+        // every replayed answer — a 254-char reply ending in 以上 was missing
+        // entirely from the panel. tool-call blocks are skipped: the host emits
+        // a separate tool/call event right after each one.
+        const d = ev.data ?? {};
+        const msg = d.message ?? d;
+        const content = msg?.content;
+        const stepKey = `${d.turn ?? "?"}:${d.step ?? "?"}`;
+        const appendBlock = (kind: "text" | "thinking", t: string): void => {
+          const streamed = kind === "text" ? this.streamedText : this.streamedThinking;
+          if (streamed.has(stepKey)) return; // deltas already delivered this step
+          this.appendSeg(kind, t);
+        };
+        if (!Array.isArray(content)) {
+          // Legacy string form (pre-content-block hosts).
+          const mt = typeof msg === "string" ? msg : msg?.content;
+          if (typeof mt === "string" && mt) appendBlock("text", mt);
+          break;
+        }
+        for (const b of content) {
+          if (!b || typeof b !== "object") continue;
+          const t = typeof b.text === "string" ? b.text : undefined;
+          if (!t) continue;
+          if (b.type === "text") appendBlock("text", t);
+          else if (b.type === "reasoning") appendBlock("thinking", t);
         }
         break;
       }
@@ -250,6 +287,8 @@ export class ConversationFold {
     this.firstSeq = -1;
     this.turnCounter = 0;
     this.running = false;
+    this.streamedText.clear();
+    this.streamedThinking.clear();
   }
 
   private applyChunk(chunk: any, view: { view?: any } | undefined): void {
