@@ -44,6 +44,10 @@ pnpm args:audit     # 离线校验插件发送的 RPC 参数与宿主网关描�
   truth，与源码里每个 `v012Request` 调用点逐端点比对，漂移即非零退出；不连
   服务器、不需 token。`DSH_ROOT` 可覆盖解析目录。
 - 每次打包 vsix 后，装进 VSCode 实测连接 + 发一条消息 + 看一次 diff，三项全过才算包可用。
+- **收尾必清测试残留**：smoke / 回归连的是**用户同一个 DSH 存储**，它们建的会话会以「未分组」的形式永久留在用户侧（v0.18.5 前 `smoke.mjs` 就留下了两个 `[smoke-test] 可删除`，被当成事故人工清理）。DSH **没有删除会话的 API**，只有 `workspace/archiveSession`＝侧栏隐藏：
+  - `scripts/smoke.mjs` 收尾已内建：会话 id 收进 `smokeSessionIds` → 归档 → `scripts/session-purge.mjs` 删会话日志 + 投影缓存 → 断言 `logDirOf(sid) === null`（`teardown:` 那条 ok）。**加新链/新会话必须往 `smokeSessionIds` 里塞**。
+  - 本机全局清扫：`node D:\02-bywork\tmp-plugin-debug\session-cleanup.mjs stale`（已归档但文件还在＝可疑残留，临时目录 cwd 的即测试残留）、`purge <sessionId...>`、`ghosts` / `sweep`（无主投影缓存：运行中的宿主会把热会话缓存重写回来，这份是纯派生垃圾）。
+  - 其余临时物（`%TEMP%` 夹具、调试日志、中间产物）同样在收尾时删，别留在盘上。
 
 ## 硬性设计规则（违反即 bug）
 
@@ -66,4 +70,4 @@ pnpm args:audit     # 离线校验插件发送的 RPC 参数与宿主网关描�
 
 ---
 
-最后更新: 2026-09-17（新增 `pnpm args:audit` 离线参数审计 + 「DSH 升级后必跑」纪律，见验证纪律节）
+最后更新: 2026-09-17（新增「收尾必清测试残留」纪律 + `scripts/session-purge.mjs`：DSH 无删除会话 API，归档只是侧栏隐藏，smoke 会话必须归档 + 删文件才算清干净）

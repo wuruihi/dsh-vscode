@@ -29,6 +29,11 @@ const results = [];
 let rpcSeq = 0;
 let cookie = "";
 
+// Sessions created by this run — the teardown at the bottom archives them and
+// deletes their files. DSH has no session-delete API, so a smoke run that skips
+// this leaves "[smoke-test] 可删除" sessions in the sidebar permanently.
+const smokeSessionIds = [];
+
 function ok(name, cond, detail = "") {
   results.push({ name, pass: !!cond, detail });
   console.log(`${cond ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
@@ -289,6 +294,7 @@ if (det.flavor === "legacy") {
   const session = await call("session.create", { cwd: process.cwd() });
   const sessionId = session?.sessionId;
   ok("session.create(cwd)", typeof sessionId === "string" && sessionId.length > 0, sessionId);
+  if (typeof sessionId === "string" && sessionId) smokeSessionIds.push(sessionId);
 
   let assistantText = "";
   let sawTextDelta = false;
@@ -406,6 +412,7 @@ if (det.flavor === "legacy") {
   const session = await call("session/create", { request: { cwd: process.cwd() } }, 30_000, "v012");
   const sessionId = session?.sessionId;
   ok("session/create(cwd)", typeof sessionId === "string" && sessionId.length > 0, sessionId);
+  if (typeof sessionId === "string" && sessionId) smokeSessionIds.push(sessionId);
 
   const followId = openStream("session/follow", { request: { address: { kind: "session", sessionId } } });
   const snap = await nextItem(followId, 8000);
@@ -472,6 +479,28 @@ if (det.flavor === "legacy") {
   }
 
   ws.close();
+}
+
+// ---------- teardown: smoke sessions leave no residue ----------
+// Archive hides a session from the sidebar; deleting the files is what actually
+// removes it (DSH has no session-delete API). Both run best-effort: a cleanup
+// failure must not turn a passing smoke run red.
+if (smokeSessionIds.length > 0) {
+  const { logDirOf, purgeSessionFiles } = await import("./session-purge.mjs");
+  let removedCount = 0;
+  for (const sid of smokeSessionIds) {
+    try {
+      await call("workspace/archiveSession", { sessionId: sid }, 15_000, "v012");
+    } catch {
+      /* legacy host, or already archived — the file cleanup below still applies */
+    }
+    removedCount += purgeSessionFiles(sid).length;
+  }
+  ok(
+    "teardown: smoke sessions archived + files deleted (no residue)",
+    smokeSessionIds.every((sid) => logDirOf(sid) === null),
+    `${smokeSessionIds.length} session(s), ${removedCount} path(s) removed`,
+  );
 }
 
 const failed = results.filter((r) => !r.pass);
