@@ -8,7 +8,10 @@
  * Exit 0 = PASS.
  *
  * Usage: node scripts/smoke.mjs [baseUrl] [--token <launchToken>]
- * Token fallback (v012): --token arg > DSH_SMOKE_TOKEN > ~/.dsh log scan.
+ * Token fallback (v012): --token arg > DSH_SMOKE_TOKEN > log scan (newest file
+ * first: ~/.dsh/dsh-vscode-web.log, ~/.dsh[/logs], ~/dsh/logs, plus whatever
+ * DSH_SMOKE_LOG names). Candidates are tried newest-first until one mints a
+ * cookie.
  */
 import WebSocket from "ws";
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -92,7 +95,12 @@ async function detectFlavor() {
 
 // ---------- auth (v012) ----------
 
-async function tokenFromLogTail(path, tailBytes = 262_144) {
+/** Launch tokens in a log file, NEWEST first. `dsh web` prints a fresh token on
+ *  every start, and a log can hold several starts (the local launcher archives
+ *  per start, some installs append) — reading the first match would replay a
+ *  stale token and fail the cookie exchange for a reason that looks like a
+ *  protocol break. */
+async function tokensFromLog(path, tailBytes = 262_144) {
   try {
     const info = await stat(path);
     const { open } = await import("node:fs/promises");
@@ -101,39 +109,61 @@ async function tokenFromLogTail(path, tailBytes = 262_144) {
       const start = Math.max(0, info.size - tailBytes);
       const buf = Buffer.alloc(info.size - start);
       await handle.read(buf, 0, buf.length, start);
-      const m = /token=([A-Za-z0-9_-]+)/.exec(buf.toString("utf8"));
-      return m ? m[1] : undefined;
+      return [...buf.toString("utf8").matchAll(/token=([A-Za-z0-9_-]+)/g)].map((m) => m[1]).reverse();
     } finally {
       await handle.close();
     }
   } catch {
-    return undefined;
+    return [];
   }
 }
 
-async function discoverToken() {
-  if (tokenArg) return tokenArg;
-  const candidates = [join(homedir(), ".dsh", "dsh-vscode-web.log")];
-  try {
-    for (const dir of [join(homedir(), ".dsh", "logs"), join(homedir(), ".dsh")]) {
-      const names = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith(".log"));
-      const withTime = await Promise.all(
-        names.map(async (n) => ({
-          path: join(dir, n),
-          mtime: (await stat(join(dir, n)).catch(() => undefined))?.mtimeMs ?? 0,
-        })),
-      );
-      withTime.sort((a, b) => b.mtime - a.mtime);
-      candidates.push(...withTime.map((x) => x.path));
+/** Log files that may carry a launch token, newest first. Covers both start
+ *  paths: the log this extension's own auto-start writes (~/.dsh) and the
+ *  conventional local deployment dir (~/dsh/logs) used by a desktop-shortcut
+ *  launcher — a layout convention, never a hardcoded user name (2026-09-17:
+ *  the token lived in <install>/logs, which this scan never looked at, so the
+ *  whole v012 chain aborted here). DSH_SMOKE_LOG adds a file or directory. */
+async function tokenCandidateFiles() {
+  const home = homedir();
+  const named = [join(home, ".dsh", "dsh-vscode-web.log")];
+  const dirs = [join(home, ".dsh", "logs"), join(home, ".dsh"), join(home, "dsh", "logs")];
+  const extra = (process.env.DSH_SMOKE_LOG ?? "").trim();
+  if (extra) {
+    const st = await stat(extra).catch(() => undefined);
+    if (st?.isFile()) named.push(extra);
+    else dirs.push(extra);
+  }
+  const found = new Map(); // path -> mtimeMs
+  for (const f of named) {
+    const st = await stat(f).catch(() => undefined);
+    if (st?.isFile()) found.set(f, st.mtimeMs);
+  }
+  for (const dir of dirs) {
+    const names = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith(".log"));
+    for (const n of names) {
+      const p = join(dir, n);
+      const st = await stat(p).catch(() => undefined);
+      if (st?.isFile()) found.set(p, st.mtimeMs);
     }
-  } catch {
-    /* best effort */
   }
-  for (const file of candidates) {
-    const token = await tokenFromLogTail(file);
-    if (token) return token;
+  return [...found.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p);
+}
+
+/** Every distinct token found, newest file first. */
+async function discoverTokens() {
+  if (tokenArg) return [tokenArg];
+  const seen = new Set();
+  const out = [];
+  for (const file of await tokenCandidateFiles()) {
+    for (const t of await tokensFromLog(file)) {
+      if (!seen.has(t)) {
+        seen.add(t);
+        out.push(t);
+      }
+    }
   }
-  return undefined;
+  return out;
 }
 
 async function exchangeCookie(token) {
@@ -185,13 +215,36 @@ if (!det) {
 ok("detect flavor", true, `${det.flavor}${det.needsAuth ? " (auth required)" : ""}`);
 
 if (det.flavor === "v012" && det.needsAuth) {
-  const token = await discoverToken();
-  if (!token) {
-    ok("v012 auth", false, "no launch token (pass --token or set DSH_SMOKE_TOKEN)");
+  const tokens = await discoverTokens();
+  if (tokens.length === 0) {
+    ok("v012 auth", false, "no launch token (pass --token, set DSH_SMOKE_TOKEN, or point DSH_SMOKE_LOG at the dsh web log)");
     process.exit(1);
   }
-  const got = await exchangeCookie(token);
-  ok("v012 auth", got);
+  // Try the candidates newest-first. A token that mints a real cookie wins
+  // outright; a bare 200/302 (the old acceptance rule) is only a fallback, so a
+  // stale token can never cut the search short.
+  let got = false;
+  let used = 0;
+  let fallback = 0;
+  for (const [i, t] of tokens.entries()) {
+    const accepted = await exchangeCookie(t);
+    if (accepted && cookie) {
+      got = true;
+      used = i + 1;
+      break;
+    }
+    if (accepted && fallback === 0) fallback = i + 1;
+  }
+  if (!got && fallback > 0) {
+    got = true;
+    used = fallback;
+  }
+  const detail = got
+    ? tokens.length > 1
+      ? `cookie minted with token ${used}/${tokens.length} from the log candidates`
+      : ""
+    : `none of the ${tokens.length} launch token(s) found in the logs were accepted`;
+  ok("v012 auth", got, detail);
   if (!got) process.exit(1);
   det = await detectFlavor();
 }

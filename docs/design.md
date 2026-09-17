@@ -114,7 +114,7 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 ### V1（本 spec 范围）
 
 **F1 连接与生命周期**
-- activate → `host.describe` 探活 3080（1s 超时）→ 连接；失败显示状态条 + "拉起 DSH" 按钮（Start-Process 脱离启动，轮询就绪 120s）
+- activate → `host.describe` 探活 3080（1s 超时）→ 连接；失败显示状态条 + "拉起 DSH" 按钮 → **先解析 node.exe 与 dsh CLI**（设置显式指定优先，否则按安装约定逐候选探测；都找不到则弹窗列出已探测位置并提供手动定位，选中即记住到用户设置——见 `src/connection/locate.ts`）→ Start-Process 脱离启动，轮询就绪 120s
 - 状态机：connecting / connected / disconnected / starting，状态条常显
 - 断线指数退避重连（1s 起步，上限 30s），重连后全量对账
 

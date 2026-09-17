@@ -27,8 +27,10 @@ VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github
 |---|---|---|
 | `dsh-vscode.baseUrl` | `http://127.0.0.1:3080` | dsh web 地址 |
 | `dsh-vscode.autoStart` | `true` | 探测不到时尝试拉起（Windows） |
-| `dsh-vscode.nodePath` | 系统 node | 拉起用 node 路径 |
-| `dsh-vscode.dshBinPath` | 全局安装的 bin.js | 拉起用 dsh CLI 路径 |
+| `dsh-vscode.nodePath` | 自动探测 | 拉起用的 node.exe；留空按 Node 安装目录 → PATH 依次探测 |
+| `dsh-vscode.dshBinPath` | 自动探测 | 拉起用的 dsh CLI 入口（`…/node_modules/@deepseek-ai/dsh/lib/bin.js`）；留空按 `%APPDATA%\npm` → Node 全局前缀 → `~/dsh` → PATH → 当前工作区 → `npm root -g` 依次探测 |
+
+两个路径都留空即可。探测不到时弹窗可直接手动定位（校验后记住到用户设置），也可随时用命令面板 `DSH: Locate dsh CLI / node Path` 主动指定。
 
 ## 开发
 

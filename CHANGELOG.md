@@ -4,6 +4,17 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.5 — 一键拉起修复：拉起路径改为「显式配置优先 + 自动探测」（原默认值是某台机器的专属路径）
+
+- **现象**（用户报）：面板提示拉起后一直等到超时报 `dsh web did not become ready in 120s`；`~/.dsh/dsh-vscode-web.err.log` 里其实是 `Cannot find module 'C:\Users\wurui\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js'`。实际长期靠桌面快捷方式启动。
+- **根因**：`package.json` 把 `dsh-vscode.dshBinPath` 的默认值写成了**某一台机器的路径**（连用户名一起进了公开仓库），`nodePath` 同样写死 `C:\Program Files\nodejs\node.exe`。本机 DSH 是本地部署（`~/dsh/node_modules/…`），该默认路径并不存在；而 `startDsh` 不校验存在性，直接把不存在的 bin.js 交给 `Start-Process` → node 立即 `Cannot find module` 退出 → 插件只能靠 **120 秒轮询超时**兜底，报错完全不指向"路径错"，与"启动很慢"无法区分。
+- **修法**：新增 `src/connection/locate.ts`（纯 Node、无 vscode 依赖，故可离线回归）。两个路径都改为**显式配置优先 + 多候选自动探测**：dsh CLI 依次探测 `%APPDATA%\npm` → `npm_config_prefix` → Node 安装目录内的全局前缀 → `~/dsh`（本地部署）→ `~` → 各 PATH 前缀 → 已打开的 workspace 目录 → `npm root -g`（最后兜底，需起 npm 进程）；`node.exe` 依次探测 Node 标准安装目录 → 用户级安装目录 → PATH。**显式配置若指向不可用的文件，会被记一条 warn 并继续自动探测**（不是硬失败）——这正是从旧默认值升上来时会踩的坑。
+- **UX 闭环**：探测失败不再干等 120 秒，改为立刻弹窗并附**已探测位置清单**，提供「手动定位…」：文件选择器校验选中的确实是 dsh CLI（路径须形如 `…/node_modules/@deepseek-ai/dsh/lib/bin.js`，或文件头带 `dsh-app-boot` 标记；node 须为 `node.exe`）后写入用户设置，随即自动重试启动（最多一次，防循环）。另加命令面板 `DSH: Locate dsh CLI / node Path`，可主动指定、不必等失败。两个设置的默认值改空串（=自动探测），公开仓库里不再出现任何人的机器路径。
+- **工具链同步修复（`scripts/smoke.mjs`）**：v012 的启动 token 只从 `~/.dsh` 扫，**从不看启动器的 `<install>/logs`**（本机正常启动路径），于是 token 找不到 → 校验直接 `exit 1`，**整套 v012 协议检查根本没跑**（只见 2 项结果）；且取的是日志里**第一个** token，多轮启动的日志会回放过期 token，失败现象与"协议不兼容"无法区分。现改为：按 mtime 倒序扫 `~/.dsh/dsh-vscode-web.log`、`~/.dsh[/logs]`、`~/dsh/logs`（约定，不硬编码用户名），支持 `DSH_SMOKE_LOG` 指定文件或目录；每文件取**最新** token；候选按新到旧逐个试，**mint 出真 cookie 者胜**（旧的"无 cookie 也算成功"只作兜底），避免过期 token 提前截断搜索。
+- **验证**：`scripts/locate-regress.cjs` **26/26**（在临时目录里造出各类安装布局：显式优先、**陈旧显式路径被报出且被绕过**、探测顺序、PATH/%APPDATA%/npm_config_prefix/workspace 各来源、校验器接受约定布局与"搬家但有标记"的 bin.js、拒绝伪装成 bin.js 的文件、重复路径只列一次、本机真实布局零配置命中真实 CLI 与 node）；`tsc` 双 tsconfig exit 0；`args-audit` 0 处不匹配；离线回归 auth 3/3、fence 8/8、fold 17/17、model 23/23、repair 14/14；`smoke` **11/12**（v012 全链路跑通，授权自动发现成功）。
+- **已知：smoke 唯一 FAIL 为环境/宿主侧，非本次回归**——`session/prompt` 90 秒内零 `assistant/chunk`（`turn/end` 正常到达），即本轮在宿主侧就失败了。**用改动前的已提交 `smoke.mjs` 复现同一 FAIL**（显式传 token），确认与本次改动无关；本机宿主默认模型为 `deepseek-flash`，两个 provider 均有 key。建议在 GUI 里打开 smoke 建的那两个会话（`…dsh-vscode--/session-6289ce94…`、`…1b8e1aa3…`）看宿主给出的失败原因。smoke 的判据只认 `assistant/chunk`，对"provider 直接失败、一个 chunk 都不发"的轮次会误报为流式路径问题——待定夺是否放宽判据。
+- **待用户手测**：装 v0.18.5 后，在 DSH **未运行**时点面板的拉起按钮（本次只做了静态与离线验证，真实拉起需 DSH 停机，无法在会话内自测）。
+
 ## v0.18.4 — 权限模式切换失败修复（网关参数改名 `images` → `submittedAttachments`）
 
 - **现象**（用户报）：插件面板不能切换权限模式，切「完全权限」报

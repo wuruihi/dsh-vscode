@@ -217,6 +217,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void diff.openTurnSummary();
     }),
     vscode.commands.registerCommand("dsh-vscode.showLogs", () => getLog().show()),
+    // Proactive half of the auto-start path fix (0.18.5): pick node.exe / the dsh
+    // CLI by hand without waiting for a failed start. Empty settings = auto-detect.
+    vscode.commands.registerCommand("dsh-vscode.locateDsh", async () => {
+      const items: Array<vscode.QuickPickItem & { target: "node" | "dsh" }> = [
+        { label: "dsh CLI 入口（lib/bin.js）", detail: "拉起 dsh web 时执行的文件", target: "dsh" },
+        { label: "node.exe", detail: "运行 dsh CLI 的可执行文件", target: "node" },
+      ];
+      const pick = await vscode.window.showQuickPick(items, { title: "DSH: 手动指定路径（设置留空则自动探测）" });
+      if (pick) await lifecycle.pickExe(pick.target);
+    }),
   ];
   context.subscriptions.push(...subs);
 

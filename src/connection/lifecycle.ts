@@ -7,12 +7,22 @@
  * upgrade is picked up without a window reload.
  */
 import { spawn } from "node:child_process";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { RpcClient } from "./client.js";
 import { EventStreams } from "./events.js";
 import { V012Streams } from "./remote.js";
 import { Auth } from "./auth.js";
 import { detectFlavor, type Flavor } from "./protocol.js";
+import {
+  isDir,
+  locateDshBin,
+  locateNodeExe,
+  looksLikeDshBin,
+  looksLikeNodeExe,
+  nearestExistingDir,
+  type LocateOutcome,
+} from "./locate.js";
 import { log, warn, error } from "../log.js";
 
 export type ConnState = "connecting" | "connected" | "disconnected" | "starting";
@@ -192,12 +202,11 @@ export class DshLifecycle {
     return detected !== undefined;
   }
 
-  /** Start dsh web detached (Windows-only in V1, see design.md known limits). */
-  async startDsh(): Promise<boolean> {
+  /** Start dsh web detached (Windows-only in V1, see design.md known limits).
+   *  `attempt` guards the "locate it by hand" retry against loops. */
+  async startDsh(attempt = 0): Promise<boolean> {
     this.setState("starting");
     const cfg = vscode.workspace.getConfiguration("dsh-vscode");
-    const nodePath = cfg.get<string>("nodePath", "");
-    const dshBin = cfg.get<string>("dshBinPath", "");
     let url: URL;
     try {
       url = new URL(this.baseUrl);
@@ -212,6 +221,31 @@ export class DshLifecycle {
       this.setState("disconnected");
       return false;
     }
+
+    // Resolve BOTH executables BEFORE Start-Process. A wrong path used to surface
+    // only as "did not become ready in 120s" — indistinguishable from a slow boot,
+    // because the shipped default was one particular machine's path (2026-09-17 fix).
+    const node = locateNodeExe({ explicit: cfg.get<string>("nodePath", "") });
+    const bin = locateDshBin({
+      explicit: cfg.get<string>("dshBinPath", ""),
+      home: this.home,
+      extraRoots: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+    });
+    if (bin.explicitRejected) {
+      warn(`[lifecycle] dshBinPath 不是 dsh CLI，已忽略并改为自动探测: ${bin.explicitRejected}`);
+    }
+    if (node.explicitRejected) {
+      warn(`[lifecycle] nodePath 不是 node.exe，已忽略并改为自动探测: ${node.explicitRejected}`);
+    }
+    if (!node.hit || !bin.hit) {
+      await this.reportUnresolved(node, bin, attempt);
+      return false;
+    }
+    const nodePath = node.hit.path;
+    const dshBin = bin.hit.path;
+    log(`[lifecycle] node = ${nodePath}  ← ${node.hit.source}`);
+    log(`[lifecycle] dsh  = ${dshBin}  ← ${bin.hit.source}`);
+
     const started = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "DSH: starting dsh web…" },
       async () => {
@@ -260,6 +294,62 @@ export class DshLifecycle {
     this.setState("disconnected");
     this.keepDetecting();
     return false;
+  }
+
+  /** Explain why the start cannot even be attempted, and offer to point at the
+   *  file by hand (validated, saved globally, then the start is retried once). */
+  private async reportUnresolved(node: LocateOutcome, bin: LocateOutcome, attempt: number): Promise<void> {
+    const missingNode = !node.hit;
+    const outcome = missingNode ? node : bin;
+    const what = missingNode ? "node.exe" : "dsh CLI（lib/bin.js）";
+    error(`[lifecycle] 找不到 ${what}，已探测 ${outcome.searched.length} 处：\n  ${outcome.searched.join("\n  ")}`);
+    this.setState("disconnected");
+    const pick = await vscode.window.showErrorMessage(
+      `DSH: 找不到 ${what}，无法拉起 dsh web（已探测 ${outcome.searched.length} 处）。可手动指定路径，插件会记住。`,
+      "手动定位…",
+      "查看日志",
+    );
+    if (pick === "查看日志") {
+      this.showLogs();
+      return;
+    }
+    if (pick === "手动定位…" && attempt < 2 && (await this.pickExe(missingNode ? "node" : "dsh"))) {
+      await this.startDsh(attempt + 1);
+    }
+  }
+
+  /** File-picker fallback, also used by the `dsh-vscode.locateDsh` command:
+   *  validate the choice, then persist it to the user settings. */
+  async pickExe(kind: "node" | "dsh"): Promise<boolean> {
+    const isNode = kind === "node";
+    const key = isNode ? "nodePath" : "dshBinPath";
+    // Offer a useful starting folder: the usual install dir when it exists,
+    // otherwise its nearest existing ancestor (never the filesystem root).
+    const anchor = isNode ? "C:\\Program Files\\nodejs" : path.join(this.home, "dsh");
+    const defaultDir = isDir(anchor) ? anchor : nearestExistingDir(anchor, this.home);
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: isNode ? "选择 node.exe" : "选择 ...\\@deepseek-ai\\dsh\\lib\\bin.js",
+      defaultUri: vscode.Uri.file(defaultDir),
+      filters: isNode ? { "node.exe": ["exe"] } : { "bin.js": ["js"] },
+    });
+    const p = picked?.[0]?.fsPath;
+    if (!p) return false;
+    const ok = isNode ? looksLikeNodeExe(p) : looksLikeDshBin(p);
+    if (!ok) {
+      void vscode.window.showWarningMessage(
+        isNode
+          ? `DSH: ${p} 不是 node.exe。`
+          : `DSH: ${p} 不是 dsh 的 CLI 入口（应形如 ...\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js）。`,
+      );
+      return false;
+    }
+    await vscode.workspace.getConfiguration("dsh-vscode").update(key, p, vscode.ConfigurationTarget.Global);
+    log(`[lifecycle] 已记住 dsh-vscode.${key} = ${p}`);
+    void vscode.window.showInformationMessage(`DSH: 已记住路径 ${p}`);
+    return true;
   }
 
   showLogs(): void {

@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.18.4",
+  "version": "0.18.5",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -63,6 +63,10 @@
       {
         "command": "dsh-vscode.showLogs",
         "title": "DSH: Show Logs"
+      },
+      {
+        "command": "dsh-vscode.locateDsh",
+        "title": "DSH: Locate dsh CLI / node Path"
       }
     ],
     "menus": {
@@ -95,13 +99,13 @@
         },
         "dsh-vscode.nodePath": {
           "type": "string",
-          "default": "C:\\Program Files\\nodejs\\node.exe",
-          "description": "Node executable used to start dsh web (Windows)."
+          "default": "",
+          "description": "Node executable used to start dsh web (Windows). Leave empty to auto-detect (Node install dir, then PATH); when nothing is found the extension offers to locate it and remembers your pick."
         },
         "dsh-vscode.dshBinPath": {
           "type": "string",
-          "default": "C:\\Users\\wurui\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
-          "description": "Path to the installed dsh CLI bin.js used when starting dsh web."
+          "default": "",
+          "description": "Path to the installed dsh CLI entry (…/node_modules/@deepseek-ai/dsh/lib/bin.js) used when starting dsh web. Leave empty to auto-detect (%APPDATA%\\npm → Node install prefix → ~/dsh → PATH prefixes → open workspace → npm root -g)."
         },
         "dsh-vscode.defaultModel": {
           "type": "string",
