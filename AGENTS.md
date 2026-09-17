@@ -30,6 +30,7 @@ pnpm compile        # tsc --noEmit 类型检查
 pnpm build          # esbuild 打包扩展宿主 + webview
 pnpm package        # vsce 打 .vsix（输出 dist/）
 pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web 在跑）
+pnpm args:audit     # 离线校验插件发送的 RPC 参数与宿主网关描述符是否一致
 ```
 
 ## 验证纪律（改完必跑）
@@ -37,6 +38,11 @@ pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web �
 - 改 `src/`：`pnpm compile` 必须过。
 - 改 `webview/`：`pnpm build` + VSCode 里 `Developer: Reload Window` 手测。
 - 涉及协议交互：先 `pnpm smoke` 再手测。
+- **每次 DSH 升级后必跑 `pnpm args:audit`**（smoke 只盖连接层主干，盖不到
+  `commands/execute`、`subagents/list` 这类业务端点——v0.18.3 的权限切换
+  失效就是这样漏过去的）。该脚本从**已安装的 DSH** 解析网关描述符当 ground
+  truth，与源码里每个 `v012Request` 调用点逐端点比对，漂移即非零退出；不连
+  服务器、不需 token。`DSH_ROOT` 可覆盖解析目录。
 - 每次打包 vsix 后，装进 VSCode 实测连接 + 发一条消息 + 看一次 diff，三项全过才算包可用。
 
 ## 硬性设计规则（违反即 bug）
@@ -60,4 +66,4 @@ pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web �
 
 ---
 
-最后更新: 2026-09-02（协议双 flavor 策略修订 + 路线图文档化）
+最后更新: 2026-09-17（新增 `pnpm args:audit` 离线参数审计 + 「DSH 升级后必跑」纪律，见验证纪律节）

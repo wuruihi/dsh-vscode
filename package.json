@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.18.3",
+  "version": "0.18.4",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -116,6 +116,7 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "smoke": "node scripts/smoke.mjs",
+    "args:audit": "node scripts/args-audit.mjs",
     "package": "pnpm build && vsce package --no-dependencies"
   },
   "devDependencies": {

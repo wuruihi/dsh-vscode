@@ -63,11 +63,14 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 
 探测顺序：先试 `session/list`（v012），404/失败回退 `session.list`/`host.describe`（legacy）；结果缓存，重连失败即重探；两试皆败 → 状态横幅「协议不识别」。v012 契约细节以竞品 apiClient.ts（MIT，0.12.90 源码）+ 本地 0.1.2 服务器实测为准，`src/connection/protocol.ts` 为唯一 flavor 判定点。
 
-**v012 实测线协议事实（2026-09-02，0.1.2-alpha.4 实机验证，smoke 12/12）**：
+**v012 实测线协议事实（2026-09-02 首测于 0.1.2-alpha.4；2026-09-17 复测于 0.1.5-rc.2）**：
 - 一元 RPC 的 `args` 必须与描述符**逐参数精确匹配**（`dsh-api-gateway` assertExactArguments）：每个业务参数一个键，键名 = 参数名或 lookup wire 名。多键/缺键都报 `gateway/arguments-invalid`。
+- **参数名与包裹方式随版本漂移**：0.1.5-rc.2 实测 `commands/execute` 必填字段由 `images` 改名为 `submittedAttachments`；`subagents/list` 由 request 包裹改回平铺。任何一次 DSH 升级都要重跑参数审计，不要假设契约稳定。
 - 单 `request` 参数的方法 → `args:{request:{...}}`：session/create、prompt、cancel、rename、fork、attachment、updateQueue、selectModel、page、workspace/create、archiveSession、skills/list。
 - 特例：`session/list` → `args:{_request:{}}`（保留参数名 `_request`）；`modelCatalog`/`agentPresets/list` → `args:{}`。
-- `agent: Agent` 参数走 lookup，wire 名 `agentId`：agentPresets/select、commands/list、commands/execute。**commands/execute 的 `images` 是网关必填字段**（无图也传 `[]`）。
+- `agent: Agent` 参数走 lookup，wire 名 `agentId`：agentPresets/select、commands/list、commands/execute。**commands/execute 的 `submittedAttachments` 是网关必填字段**（无附件也传 `[]`）。
+- `subagents/list` 在 0.1.5-rc.2 改为**平铺** `args:{parentSessionId}`（0.1.2-alpha.x 曾是 `args:{request:{parentSessionId}}`）——同一方法跨 RC 版本包裹方式会变，升级后必须重跑 args 审计。
+- **升级后必跑**：`pnpm args:audit`（`scripts/args-audit.mjs`）——**纯离线、确定性**：从**已安装的 DSH** 解析网关描述符当 ground truth，与源码里每个 `v012Request` 调用点逐端点比对顶层参数名，漂移即非零退出。**不连服务器、不需 token**（连服务器的 A/B 探针只在首次定契约时用过），`DSH_ROOT` 可覆盖解析目录。
 - 流开帧同样走参数匹配：`session/follow` → `payload:{args:{request:{address,maxMessages?}}}`；`session/control`、`workspace/follow`、`$events` → `args:{}`。
 - `$events/result` 精确三键 `{clientId, eventId, outcome}`；outcome `{kind:"result",value?}|{kind:"rejected",error}|{kind:"next"}`。
 - 会话事件信封与 legacy 完全一致（`assistant/chunk` 的 `data.chunk.type` 仍是 `text-delta`/`finish`…），fold 零改动。

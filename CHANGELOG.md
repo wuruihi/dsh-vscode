@@ -4,6 +4,27 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.18.4 — 权限模式切换失败修复（网关参数改名 `images` → `submittedAttachments`）
+
+- **现象**（用户报）：插件面板不能切换权限模式，切「完全权限」报
+  `权限切换失败：gateway/arguments-invalid: typert gateway: commands/execute: args fields do not match the descriptor: missing "submittedAttachments"; unexpected "images"`；发消息正常。
+- **根因**：DSH 升级到 **0.1.5-rc.2** 后，`commands/execute` 的网关描述符把必填字段由 `images` **改名为 `submittedAttachments`**（`dsh-commands/lib/typert.host.js` 的 `parameters[2]`）。而 `dsh-api-gateway` 的 `assertExactArguments` 要求 args **逐参数精确匹配**——多一个 `images`、少一个 `submittedAttachments` 都直接拒。插件 0.18.3 里写死的仍是 0.12.x 时代的 `images`，于是所有走该端点的动作全挂：**发消息不走这条路所以正常，`/permission` 切换、斜杠命令、附件提交都走它**。
+- **同源第二处漂移（本次一并修）**：`subagents/list` 在 0.1.5-rc.2 由 `{request:{parentSessionId}}` 改回**平铺** `{parentSessionId}`（0.1.2-alpha.x 曾是 request 包裹）。实测前者 `gateway/arguments-invalid: missing "parentSessionId"; unexpected "request"`，后者返回 `{entries:[],parentAvailable:true}`。该漂移会让子代理抽屉静默空列表。
+- **修法**：`src/connection/client.ts` 两处参数映射对齐 0.1.5-rc.2 实测描述符；同步订正 `docs/design.md` §3.0 的参数契约段（原文写死「`images` 是必填」已过时），并补「参数名/包裹方式随版本漂移，升级后必须重跑审计」的规程。
+- **防复发（本次新增）**：新增 `pnpm args:audit` → `scripts/args-audit.mjs`。**离线、确定性**：从已安装的 DSH 解析网关描述符（ground truth），与插件源码里每个 `v012Request` 调用点实际发送的顶层参数名逐端点比对，漂移即非零退出。`smoke.mjs` 只覆盖连接层主干、**盖不到 `commands/execute`/`subagents/list` 这类业务端点**——这正是本次漏网的原因。定位 DSH 支持 `DSH_ROOT` 覆盖，不连服务器、不需 token，升级后立刻可跑。
+- **验证**：修复前该脚本在 `commands/execute`、`subagents/list` 两处 FAIL（**复现用户报错原文**）；修复后全部通过。详见下方「最终验证」与「宿主实测」两条。
+- **附录：换机后 dev 仓库依赖链接损坏**（非本次代码问题，已修复）。pnpm `isolated` linker 的 junction 在整仓库跨机拷贝后退化成**空目录**（`node_modules/<name>` 看着都在、实际 0 项），`tsc` 报 `Cannot find type definition file for 'node'`；pnpm 存储 `D:\.pnpm-store\v11` 未随行。新增 `scripts/restore-links.cjs` 离线自愈：**不联网、不装 pnpm、不删任何文件**，只把空目录换成指向 `.pnpm` 真实路径的 junction，映射全部取自 pnpm 自己写的元数据（不猜版本），共三路来源——① `.package-map.json` 的 `packages[].dependencies`（432 包完整依赖图，决定各包自己的 `node_modules`）；② `.modules.yaml` 的 `hoistedDependencies`（决定 `.pnpm/node_modules` 私有 hoist 层，**多版本同名包如 chalk/semver/lru-cache 靠它才能定版**）；③ vsce 的 `@secretlint/*` 提到根目录（见附录二）。执行后 **1238 个 junction 全部为链接，剩余空目录 1 个（`keytar/build`，发布包内本就是空构建目录）**。缺 31 个目标（62 处引用）是 `@esbuild/*`、`@vscode/vsce-sign-{darwin,linux,…}` 的**其它平台**二进制，Windows 本就无需，`.modules.yaml` 的 `skipped` 列表亦如此记载。`pnpm install` 可随时还原。
+- **附录二：打包链路三处修复**（否则出不了 vsix）。
+  1. `@vscode/vsce` 在 pnpm 严格布局下报 `Failed to load secretlint's rule module` —— secretlint 从 **cwd（仓库根）** 解析规则名，而 `@secretlint/*` 只是 vsce 的传递依赖、根目录没有。官方解法是配 `public-hoist-pattern`；这里不改项目配置，由 `restore-links.cjs` 把 vsce 依赖里的 `@secretlint/*` 链到根目录，效果等同。
+  2. `scripts/restore-links.cjs` 自身缺陷已修：作用域包（`@vscode/vsce`）的依赖容器被误算成 `node_modules/@scope` 而非 `node_modules`，导致 66 个链接错放（`@vscode/commander`），表现为 `Cannot find module 'commander'`。脚本现按「父目录是否以 `@` 开头」正确判定容器，并能自动清理历史错放。
+  3. `.vscodeignore` 规则修正：vsce 用 **minimatch（`dot:true`，无 `matchBase`）** 过滤，`*` **不跨 `/`**；且它「给目录模式补 `/**`」的逻辑会**跳过含 `*` 的模式**——所以 `tmp-*` 只盖得住根目录文件，盖不住 `tmp-x/文件`。已补 `tmp-*/**`、`_tmp_*/**`、`.tmp-*`、`.tmp-*/**`（实测 `.tmp-*` 对目录内文件返回 false、`.tmp-*/**` 返回 true）。**这就是 0.18.2、0.18.3 两次往包里混进临时产物的真因**，本次一并根治。
+- **附录三：DSH 本体侧 `node_modules/openai` 被截断**（用户报的另一个问题，非插件代码问题，已修复并实测）。现象：自定义模型（信大网御）「本轮运行失败 `Cannot find module 'C:\Users\wurui\dsh\node_modules\openai\internal\tslib.mjs'`」。根因：`C:\Users\wurui\dsh` 是含 250+ 个 `@deepseek-ai/*` 包的完整部署目录，安装时 `npm install` 跑到 529 秒（8.8 分钟）日志戛然而止，`openai@6.40.0` 的**解包被中断截断**——本地仅 1588/2512 个文件。判据是「本地文件 = 官方 tarball 的**严格子集**（多余 0、内容不一致 0）+ 缺失从 tar 第 1588 个条目起**连续全缺**」，据此排除下载损坏与人为删除。之所以只有 ESM 挂：`@earendil-works/pi-ai` 是 ESM 包，`import "openai"` 走 `exports.default` → `index.mjs`，而 tar 中 `.js`/`.mjs`/`.d.mts` 按序排列，CJS 形态先被写入、ESM 形态成片落在截断点之后。修法：从官方源取 tarball **字节级补齐 924 个文件**，现 **2512/2512、零差异**，`import openai` 与 `dsh-llm-pi-ai`（导出 `PiAiAdapter`）均实测加载成功；重启宿主后 `session/modelCatalog` 的 `failures` 为空、`comleader` 可路由，实跑一轮 `comleader/deepseek-v4.1-flash` 收到 `assistant/message:[{"type":"text","text":"正常"}]`、`turn/end: completed`。
+- **最终验证**：`pnpm compile` 双 tsconfig 通过（`src` / `webview` 均 exit 0）；`args-audit` 11 个调用点 **10 PASS + 1 SKIP（`$events/result` 网关内置）+ 0 不匹配**，退出码 0；`pnpm build` 后产物 `images:` 归零、`submittedAttachments` 就位、`subagents/list` 已平铺；`vsce package` 产出 `dsh-web-vscode-0.18.4.vsix`（**10 files / 229.83 KB，零临时垃圾**，对比首次打包 19 files 混入 9 个 `.tmp-*.tmpdir`）；已装机 `--install-extension`，装机目录内产物同样校验通过（0.18.3 保留，可回滚）。
+- **宿主实测（0.1.5-rc.2 重启后，非静态推断）**：`commands/execute` 交替发两次——旧写法 `images:[]` 返回**与用户报错逐字相同**的
+  `gateway/arguments-invalid: … missing "submittedAttachments"; unexpected "images"`（复现），新写法 `submittedAttachments:[]` 返回 `ok=true`、`{"result":{"kind":"success","text":"preset danger-full-access"}}`（修复）。`subagents/list` 同理：`{request:{…}}` 报 `missing "parentSessionId"; unexpected "request"`，平铺 `{parentSessionId}` 返回 `{entries:[],parentAvailable:true}`。
+  **附带事实**：宿主可用权限预设为 `read-only / workspace-write / danger-full-access`（`/permission default` 报 `unknown preset "default"`），若面板预设列表与此不一致需另查。
+  **待办**：VSCode `Developer: Reload Window` 后手测面板切「完全权限」与子代理抽屉（协议层已实测通过）。
+
 ## v0.18.3 — 模型芯片说谎修复：显示会话真实模型 + 新建会话用「本项目最近使用」
 
 - **现象**（用户报）：在插件里把模型切到 DeepSeek v4.1 Flash，芯片也显示 v4.1，但该会话每次请求实际跑的还是 glm-5.3 ——「会话中间切换模型不生效？」

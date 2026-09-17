@@ -173,12 +173,16 @@ export class RpcClient {
 
   // ---------- v012 wire (0.1.2+) ----------
   //
-  // Gateway contract (live-probed on 0.1.2-alpha.4, dsh-api-gateway
+  // Gateway contract (re-probed on 0.1.5-rc.2, dsh-api-gateway
   // assertExactArguments): `args` carries EXACTLY one key per business
   // parameter, keyed by the parameter name (`request`, `_request`) or the
   // lookup wire (`agent` → `agentId`). Extra or missing keys are rejected.
   // Single-`request` methods therefore wrap as {request:{...}}; `agent`
-  // methods spread flat; `images` is a mandatory wire field on commands/execute.
+  // methods spread flat; `submittedAttachments` is a mandatory wire field on
+  // commands/execute (renamed from `images` in 0.1.5).
+  //
+  // NOTE: this contract is version-sensitive. Re-run scripts/args-audit.mjs
+  // against a live server after every DSH upgrade to catch drift early.
 
   private async v012Call<T>(method: string, payload: any, timeoutMs: number): Promise<T> {
     // Structurally different methods first.
@@ -211,8 +215,9 @@ export class RpcClient {
       return this.v012Request<T>("skills/list", { request: { sessionId: payload?.sessionId } }, timeoutMs);
     }
     if (method === "subagent.list") {
-      // rc.2: subagent.list {parentSessionId}; 0.1.2: subagents/list {request:{parentSessionId}}
-      return this.v012Request<T>("subagents/list", { request: { parentSessionId: payload?.parentSessionId } }, timeoutMs);
+      // rc.2: subagent.list {parentSessionId}; 0.1.2-alpha.x: subagents/list
+      // {request:{parentSessionId}}; 0.1.5-rc.2: subagents/list flat {parentSessionId}.
+      return this.v012Request<T>("subagents/list", { parentSessionId: payload?.parentSessionId }, timeoutMs);
     }
     if (method === "commands/list") {
       return this.v012Request<T>("commands/list", { agentId: payload?.args?.agentId }, timeoutMs);
@@ -221,7 +226,7 @@ export class RpcClient {
       return this.v012Request<T>("commands/execute", {
         agentId: payload?.args?.agentId,
         line: payload?.args?.line,
-        images: payload?.args?.images ?? [],
+        submittedAttachments: payload?.args?.submittedAttachments ?? [],
       }, timeoutMs);
     }
 

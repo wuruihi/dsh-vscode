@@ -18,6 +18,15 @@ pnpm-workspace.yaml
 .gitignore
 .dsh/**
 memory/**
+# 探针/临时产物。注意 vsce 用 minimatch(dot:true) 且 * 不跨 '/'，
+# 并且它「给目录模式补 /**」的逻辑会跳过含 '*' 的模式 —— 所以
+# `tmp-*` 只能盖住根目录下的文件，盖不住 `tmp-x/文件`；目录形式必须
+# 显式写 `/**`。0.18.2（tmp-*.mjs 探针）、0.18.4（.tmp-*.tmpdir 目录）
+# 两次漏进包都是这个原因。
 tmp-*
+tmp-*/**
 _tmp_*
+_tmp_*/**
+.tmp-*
+.tmp-*/**
 *.vsix

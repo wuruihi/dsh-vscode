@@ -5,3 +5,9 @@ dist/
 *.log
 
 test-sandbox/
+
+# 探针脚本用 fs.mkdtemp 在 cwd 落下的临时目录/文件
+# （形如 .tmp-<name>.mjs.<pid>.<uuid>.tmpdir），v0.18.2/0.18.3 曾因此混进 vsix
+.tmp-*
+tmp-*
+_tmp_*
