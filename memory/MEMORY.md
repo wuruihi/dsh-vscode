@@ -120,3 +120,8 @@
 
 - **subagent.* 在 alpha.5 客户端 Remote API 上不存在**（HTTP 404 / WS 流载体 invalid Remote endpoint）。子会话就是 session：history 走 session.history（我方 snapshot/page 适配）、追问走 session.prompt {sessionId:childId, mode:queue, content:[{type:text}]}、打断走 session.cancel {sessionId:childId}。竞品 RPC 名（rc.x 时代）只当线索不当事实
 - 零污染探针判读法：伪 id → session/not-found 业务错 = 参数 schema 合法；404/arguments-invalid = 通道本身不对
+
+## v0.17.0：工作区真分组管理（2026-09-02）
+
+- **读流写HTTP混合模式**：workspace/list 无 HTTP 路由（读=workspace/follow 快照基线）；rename/insertBefore/insertSessionBefore/delete/create 五写端点在线。与 subagent（读写都不走专属端点）相反——每个方法族都要独立实证
+- workspaceView={workspaceId,path,title,sessionIds,createdAt,updatedAt}；insertBefore 锚点语义=移到某组之前，省略锚点=追加尾部；archiveSession 在 0.1.2 已去掉 workspaceId 只收 sessionId
