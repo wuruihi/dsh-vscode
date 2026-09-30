@@ -4,6 +4,45 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.21.0 — 设置页瘦身 + 状态胶囊加固 + webview 资源版本（接 `docs/ui-handoff.md` §6 三件）
+
+**流程**：读交接文档 → 先复现/证伪 P0 → 按三件待办逐一改 → 截图矩阵核对（220/340/460/680 档 + 三种抽屉）。
+
+**P0「顶部状态胶囊看不见」= 不是布局问题，是版本没换（机制修复）**
+
+- **复现尝试**：harness 加 `long=1`（超长会话标题）与 `goal=0`（无目标态），在 220/260/300/340/680px 逐档截图 + 量 `app.scrollWidth` / `headerRow.scrollWidth` / 胶囊 rect ⇒ **布局全绿**（长标题正常省略，胶囊与 `⋯` 始终在可视区内）。判定：0.20.6 的"标题可收缩"已生效，用户看到的是**上一版 bundle**。
+- **真因（第一性原理）**：`dist/webview.js` 的 URI 每次重装后完全不变，而 VS Code 对 webview 资源有缓存 ⇒ 升级扩展后面板可能继续执行**旧** bundle。修：`asWebviewUri(...).with({query:"v=<version>"})` + 首行 `console.log("[dsh-vscode] webview bundle v…")`（截图/日志可直接回答"我看的是哪一版"）。
+- **胶囊主题加固**：字色改 `--vscode-foreground`、底色/描边由前景色 `color-mix` 派生（带固定灰降级），不再依赖主题是否成对定义 badge 变量 ⇒ 亮/暗主题都不可能"消失"（历史 bug：蓝字叠蓝底）。
+- **证据**：computed style `bg=color(srgb .8 .8 .8/.12) color=rgb(204,204,204) border=(.32)`；4 档头部截图胶囊均可见。
+
+**P2 抽屉截图钩子**：`app.tsx` 加 `?drawer=sessions|jobs|settings|…`（白名单取值，仅截图环境带该参数 ⇒ 生产行为不变）；harness 删掉"代点按钮"的脆弱实现与"每次截图都强制开搜索抽屉"的杂散代码，新增布局/胶囊色诊断行（`--dump-dom` 可读）。已拍 sessions / settings / jobs 三张抽屉图。
+
+**P1 设置页瘦身**（用户原话："看不懂、啥都不能改"）
+
+- 第一屏＝**四条人话设置**：**默认模型**（模型目录下拉；拿不到目录时只读 +「去 VSCode 设置改」，不放假控件）· **本会话权限**（`permission` 投影的分段按钮，文案写明是**会话级**）· **连哪个 DSH 实例**（`describeInstance` + 「切换…」复用 `DSH: Select DSH Instance`）· **找不到实例时自动打开桌面版**（勾选）。
+- 原 schema 表单整块收进「高级（服务器设置）」`<details>`，**默认收起**；只读/未开放的提示移入其中。
+- 协议新增（**扩展↔webview**，不碰 DSH 协议）：`{t:"prefs"}` / `{t:"get-prefs"}` / `{t:"set-pref"}` / `{t:"select-instance"}`；写 `dsh-vscode.*` 走宿主 `config.update(Global)`，配置变化即时回显。
+- 底部两个出口：打开 DSH 本体设置（GUI）/ VSCode 设置页。
+
+**验证**：`pnpm compile` 双 tsconfig 0 错；`pnpm build` 产出；`regress:all` 全绿（fold 24/24、fence 8/8、pathlink 8/8、locate 25/25、model 23/23、repair 14/14）；`args:audit`（桌面版 0.2.0 asar）**0 处不匹配**；`node --check dist/extension.cjs` 通过；截图矩阵 7 张（`docs/mockups/shots/v210-*`）。
+
+**待用户手测**：① 装 0.21.0 后 **Reload Window**，看头部胶囊是否出现（若仍不出现，请截图头部 + `DSH: Show Logs` 里 `[dsh-vscode] webview bundle v…` 那行）② 设置抽屉四条：改默认模型 / 切权限 / 切实例 / 关自动打开 ③ 高级折叠展开后 schema 表单仍可保存。
+
+**已知未闭环（P3）**：宽档（编辑区标签页 ≥620px）抽屉停靠时画布被压到 ~280px（wide 抽屉占 620px）——本轮未动。
+
+## v0.19.6–v0.20.6 — UI 迭代批（逐轮按用户反馈；本条为补记）
+
+> 这 11 个版本号的改动都在 webview 布局与信息架构，逐版本提交信息见 `git log`（`[0.20.6]` 等标记）。要点：
+
+- 会话行操作收成一个 `⋯`（点开才展开重命名/分叉/置顶/归档）；补 `menu-open` 类（漏打导致菜单永不展开）
+- 宽档抽屉「停靠并排」（≥620px；先写的 760px 断点太宽导致永不触发）
+- 抽屉信息架构按用户裁定重排；去掉面板自带标题行与 ✕（关闭并入域 tab 行）；去掉第三行子标题；提醒/产出移入状态胶囊浮层
+- 域 tab 必须渲染在**抽屉内部**（放在 App 流里会被遮罩盖住）；修三个 chip 挤成三行、会话列表不撑满
+- 新增 `docs/mockups/harness.html` 截图自检环境（桩 `__dshApi` 喂真实形状消息 + 跑真实 `dist/webview.js`）；它抓到的第一个真 bug ＝ JSX 里 `/* … */` 被当正文渲染
+- 运行域改名「诊断」，任务/子代理/轨迹 收成二级 tab（顶层仍高亮诊断）
+- 会话列表"只占半屏"的真因 ＝ `styles.css:74` 历史遗留 `.session-list{max-height:240px}`；统一所有分段控件选中态（未选中＝灰字无底，选中＝加粗 + 底线）
+- 状态胶囊被长标题挤没（`flex:none` + 标题可收缩）；窄档媒体查询（<520px）
+
 ## v0.19.5 — UI/布局结构重构（按 `docs/ui-refactor-proposal.md` + `docs/mockups/ui-v2.html` 实施）
 
 **用户提出的问题**：面板"说不上哪里不对"、字偏小；设定目标单独占一行；点会话标题与点「工作区」都只是开右侧抽屉；输出内容偏密、希望更易读；不要点赞点踩。

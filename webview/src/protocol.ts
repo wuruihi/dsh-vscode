@@ -145,6 +145,9 @@ export type ExtToView =
   /** settings/describe result (schema-driven server settings form). */
   | { t: "settings-describe"; data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } }
   | { t: "settings-saved"; ns: string; ok: boolean; error?: string }
+  /** 扩展自身的偏好（设置域的"人话"四条的数据源）：VSCode 配置 + 当前实例。
+   *  这些是**插件侧**设置（dsh-vscode.*），与上面服务器 schema 设置严格分开。 */
+  | { t: "prefs"; data: { defaultModel: string; autoStart: boolean; baseUrl: string; baseUrlPinned: boolean; instanceLabel: string } }
   /** workspace.list (via follow baseline) + archived session ids. */
   | { t: "workspaces"; items: WorkspaceView[]; archivedSessionIds: string[]; pinnedSessionIds: string[] }
   /** Pin/archive id sets ONLY, sent after every list change (design.md §3.6). */
@@ -201,6 +204,10 @@ export type ViewToExt =
   | { t: "subagent-interrupt"; childId: string }
   | { t: "get-settings" }
   | { t: "save-setting"; ns: string; patch: Record<string, unknown>; revision: number }
+  // 设置域"人话四条"：扩展侧偏好的读写 + 复用实例选择命令（不改服务器）
+  | { t: "get-prefs" }
+  | { t: "set-pref"; key: "defaultModel" | "autoStart"; value: string | boolean }
+  | { t: "select-instance" }
   | { t: "list-workspaces" }
   | { t: "workspace-rename"; workspaceId: string; title: string }
   | { t: "workspace-move"; workspaceId: string; beforeWorkspaceId?: string }

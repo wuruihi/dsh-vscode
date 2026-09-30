@@ -1294,3 +1294,74 @@ body { line-height: 1.5; }
   background: none; color: var(--vscode-foreground);
   font-weight: 700; box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #4a8cff);
 }
+
+/* ── 状态胶囊：不再依赖主题的 badge 变量（2026-09-30 二次加固）──────────────
+   历史：胶囊底色取 --vscode-badge-background、字色取 --vscode-badge-foreground。
+   本机用户主题的 badge 底色偏蓝、badge 字色又缺省 ⇒ 曾整体不可辨（"蓝色按钮
+   没有文字"），修字色后仍依赖主题是否成对定义这两个变量。
+   改为**只用前景色派生**：文字 = --vscode-foreground（与面板底色成对，必然
+   可读），底色/描边 = 前景色低透明度混合 ⇒ 亮主题是浅灰底深字、暗主题是
+   浅白底亮字，两种主题都不可能"消失"。头两条是降级（不支持 color-mix 时
+   用固定灰），后写的 color-mix 生效即覆盖。 */
+.capsule {
+  color: var(--vscode-foreground);
+  background: rgba(127, 127, 127, .18);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .45));
+}
+.capsule {
+  background: color-mix(in srgb, var(--vscode-foreground, #cccccc) 12%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground, #cccccc) 32%, transparent);
+}
+.capsule:hover, .capsule.is-on { border-color: var(--vscode-focusBorder, #4a8cff); }
+/* 兜底：标题文字的 flex 最小尺寸归零（overflow:hidden 已隐含此效果，
+   写明是为了让"标题可收缩"不依赖 overflow 的隐式规则）。 */
+.header-session-row .title-btn .title-text { min-width: 0; }
+
+/* ── 设置域：四条人话设置 + 出口 + 高级折叠（2026-09-30）──────────────────
+   原设置页把服务端 schema 原样铺在最上层（内部字段名、大多只读）⇒ 用户
+   "看不懂、啥都不能改"。现在第一屏是四条能看懂也能改的设置，schema 表收进
+   「高级」，默认收起。每条 = 左（名字+一句人话解释）右（控件）两列。 */
+.pref-list { display: flex; flex-direction: column; border: 1px solid var(--dsh-border); border-radius: 8px; overflow: hidden; }
+.pref-title {
+  padding: 6px 10px; font-size: 11.5px; font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, .08));
+}
+.pref-row {
+  display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 1.25fr);
+  gap: 10px; align-items: center; padding: 8px 10px;
+  border-top: 1px solid var(--dsh-border);
+}
+.pref-row:first-of-type { border-top: 0; }
+.pref-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pref-name { font-size: 12px; color: var(--vscode-foreground); }
+.pref-hint { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.pref-ctl { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.pref-value {
+  font-size: 11.5px; color: var(--vscode-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.pref-value.muted { color: var(--vscode-descriptionForeground); }
+.pref-select {
+  width: 100%; font-size: 12px; padding: 3px 8px;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px;
+}
+.pref-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pref-chips .chip { padding: 2px 10px; }
+.settings-exits { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px 8px; }
+.settings-exits .link-btn { text-align: left; }
+.settings-advanced { border: 1px solid var(--dsh-border); border-radius: 8px; overflow: hidden; }
+.settings-advanced > summary {
+  cursor: pointer; padding: 6px 10px; font-size: 12px; font-weight: 600; list-style: none;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, .08));
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::before { content: "▸ "; }
+.settings-advanced[open] > summary::before { content: "▾ "; }
+.settings-advanced-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; }
+/* 窄档：条目改上下排（左栏放不下时不要挤成两行断字） */
+@media (max-width: 520px) {
+  .pref-row { grid-template-columns: minmax(0, 1fr); }
+}

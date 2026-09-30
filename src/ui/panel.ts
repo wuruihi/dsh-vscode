@@ -55,7 +55,15 @@ export class DshChatView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
 
   private html(webview: vscode.Webview): string {
-    const js = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.js"));
+    const version = String(this.context.extension.packageJSON.version ?? "");
+    // Cache-bust by extension version: the webview bundle lives at a STABLE URI
+    // (…/dist/webview.js) across reinstall, and VS Code keeps its own resource
+    // cache. Without a version query the panel can keep executing the previous
+    // build after an upgrade — the user saw stale UI twice (0.19.5, and the
+    // "状态胶囊始终不出现" report that survived the 0.20.6 fix).
+    const js = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", "webview.js"))
+      .with({ query: `v=${encodeURIComponent(version)}` });
     const nonce = Math.random().toString(36).slice(2);
     return /* html */ `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -80,6 +88,8 @@ export class DshChatView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
   window.addEventListener("error", function(e){ show(e.message + (e.filename ? " @" + e.filename.split("/").pop() + ":" + e.lineno : "")); });
   window.addEventListener("unhandledrejection", function(e){ show("promise: " + ((e.reason && e.reason.message) || e.reason)); });
+  // Version banner: makes "which build am I looking at" answerable from a screenshot.
+  console.log("[dsh-vscode] webview bundle v${version}");
   setTimeout(function(){
     var r = document.getElementById("root");
     if (!r || !r.hasChildNodes()) show("webview 3 秒内未渲染任何内容（bundle 未执行或渲染崩溃）");

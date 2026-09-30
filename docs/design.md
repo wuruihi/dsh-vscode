@@ -158,6 +158,23 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 
 **计划评审 / 提问**：应答载体 `$events/result` 可用；权威状态在 `userQuestions` 投影（`active[]` / `settled[]`，计划评审项的 `intent.kind === "plan-review"`）。必要时可走 `userQuestions/answer {agentId, callId, answer:{answers:[{id, selected, custom?}]}}` 与 `userQuestions/attachWait {agentId, callId}`。判"应答生效"必须三条同时成立：回执 `accepted===true` + 投影中该 callId 从 `active` 消失且 `state→continued` + 随后回合恢复产出。
 
+### 3.8 设置域：两类设置的边界 + webview 资源版本（2026-09-30）
+
+**两类设置必须分家，不能混成一个表单**：
+
+| | 插件侧设置 | 服务器设置 |
+|---|---|---|
+| 归属 | `dsh-vscode.*`（VSCode 配置，本机本窗口） | DSH 本体配置文件（跨客户端共享） |
+| 读写 | 宿主 `workspace.getConfiguration("dsh-vscode")`；webview 侧 `{t:"get-prefs"}` / `{t:"set-pref",key,value}` / `{t:"select-instance"}` | `settings/describe` → `settings/update` |
+| 面板位置 | 设置抽屉第一屏「常用」四条（默认模型 / 本会话权限 / 连哪个实例 / 找不到时自动打开桌面版） | 同抽屉「高级（服务器设置）」`<details>`，**默认收起** |
+| 价值观 | 用户要"看得懂、能改" | 字段名是内部名、多为只读 ⇒ 不铺在第一屏 |
+
+- **无法在插件侧写入的项不许放假控件**：显示当前值 + 「去 VSCode 设置改」按钮（例：默认模型下拉拿不到模型目录时的降级）。「本会话权限」取自 `permission` 投影（**会话级**，不是全局设置，文案必须写明），`{t:"set-session-permission"}` 写。
+- 底部两个出口：`{t:"open-browser"}`（打开 DSH 本体 GUI，服务器设置在那里）与 `{t:"open-settings"}`（VSCode 设置页：地址/认证/路径）。
+- 偏好变更（`onDidChangeConfiguration` 命中 `defaultModel` / `autoStart`）即时 `postPrefs()` 回显；实例身份用 `describeInstance(currentInstance)` + `baseUrlPinned`（显式 baseUrl 时标明"已手动指定"）。
+
+**webview 资源必须带版本查询串**（真 bug 的机制修复，`ui/panel.ts`）：`dist/webview.js` 的 URI 在每次重装后**完全不变**，VS Code 侧有资源缓存 ⇒ 升级扩展后面板可能继续执行**上一版** bundle（用户两次报"界面没变"：0.19.5 原地覆盖、0.20.6 后仍称"状态胶囊看不到"）。修法：`asWebviewUri(...).with({query: "v=" + extension.packageJSON.version})` + 首行 `console.log("[dsh-vscode] webview bundle v…")` 让截图/日志能直接回答"我现在看的是哪一版"。**配套纪律不变**：装 vsix 必须升版本号（同版本号覆盖 VS Code 不重载）。
+
 ## 4. 功能规格
 
 ### V1（本 spec 范围）

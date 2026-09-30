@@ -86,6 +86,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return `DSH: ${head}${note}`;
   }
 
+  /** 设置域「人话四条」的数据源：扩展侧偏好（VSCode 配置）+ 当前实例。
+   *  与服务器 settings/describe 严格分开 —— 前者改插件行为，后者改 DSH 本体。 */
+  function postPrefs(): void {
+    const cfg = vscode.workspace.getConfiguration("dsh-vscode");
+    panel.post({
+      t: "prefs",
+      data: {
+        defaultModel: cfg.get<string>("defaultModel", ""),
+        autoStart: cfg.get<boolean>("autoStart", true),
+        baseUrl,
+        baseUrlPinned: pinned,
+        instanceLabel: currentInstance ? describeInstance(currentInstance) : baseUrl,
+      },
+    });
+  }
+
   function wireInstance(instance: DshInstance): void {
     for (const d of instanceSubs) d.dispose();
     instanceSubs = [];
@@ -110,6 +126,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Capability hint follows every connection-state change (design.md §3.6):
         // legacy hosts have no pin/unpin/unarchive endpoints.
         panel.post({ t: "caps", flavor: generation.currentFlavor ?? "legacy" });
+        postPrefs();
       }),
       // Connection problems that need the user's eyes (v012 auth, unknown protocol).
       ev.onProblem((message: string) => {
@@ -302,6 +319,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "save-setting":
         void manager.saveSetting(m.ns, m.patch, m.revision);
         break;
+      // 设置域「人话四条」：扩展侧偏好（写 VSCode 全局配置）+ 实例切换命令
+      case "get-prefs":
+        postPrefs();
+        break;
+      case "set-pref":
+        await vscode.workspace
+          .getConfiguration("dsh-vscode")
+          .update(m.key, m.value, vscode.ConfigurationTarget.Global);
+        postPrefs();
+        break;
+      case "select-instance":
+        void pickInstance();
+        break;
       case "list-workspaces":
         void manager.listWorkspaces();
         break;
@@ -446,6 +476,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // gets this event, so all windows converge on one instance (and Auth is keyed
     // by authority, so a switch cannot leak the previous cookie).
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("dsh-vscode.defaultModel") || e.affectsConfiguration("dsh-vscode.autoStart")) {
+        postPrefs(); // 设置域里改的值立刻回显（也可能来自 VSCode 设置页）
+      }
       if (!e.affectsConfiguration("dsh-vscode.baseUrl")) return;
       setTimeout(() => void reconnect(), 250);
     }),

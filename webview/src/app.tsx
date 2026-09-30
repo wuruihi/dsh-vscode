@@ -71,6 +71,26 @@ function imgCacheSet(id: string, entry: ImgEntry): void {
   imgNotify();
 }
 
+/** 抽屉 id（需求三 UI：只有「会话 / 诊断 / 设置」三个域 + 域内分组）。 */
+type DrawerId =
+  | "" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings" | "search" | "produced" | "schedules";
+const DRAWER_IDS: DrawerId[] = [
+  "sessions", "workspace", "jobs", "traj", "subs", "settings", "search", "produced", "schedules",
+];
+
+/** 截图自检钩子（docs/mockups/harness.html）：`?drawer=sessions|jobs|settings|…`
+ *  直接打开对应抽屉。白名单取值才生效，非法值/无参数一律 ""（生产 webview 的
+ *  URL 没有这个参数 ⇒ 行为不变）。首帧就定好初值，比"等按钮渲染出来再 click"
+ *  可靠（抽屉内容依赖首帧 state，clicks 会跟 React 抢时序）。 */
+function initialDrawer(): DrawerId {
+  try {
+    const v = new URLSearchParams(location.search).get("drawer") ?? "";
+    return (DRAWER_IDS as string[]).includes(v) ? (v as DrawerId) : "";
+  } catch {
+    return "";
+  }
+}
+
 export function App() {
   const [conn, setConn] = useState<ConnState>("connecting");
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -98,9 +118,7 @@ export function App() {
   const [permission, setPermission] = useState<PermissionData | undefined>();
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
-  const [drawer, setDrawer] = useState<
-    "" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings" | "search" | "produced" | "schedules"
-  >("");
+  const [drawer, setDrawer] = useState<DrawerId>(initialDrawer);
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
@@ -122,6 +140,8 @@ export function App() {
   const [subDraft, setSubDraft] = useState("");
   // settings sheet (settings/describe + settings/update)
   const [settingsData, setSettingsData] = useState<{ writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null>(null);
+  /** 设置域「人话四条」的数据源（扩展侧偏好，来自宿主 prefs 消息）。 */
+  const [prefs, setPrefs] = useState<{ defaultModel: string; autoStart: boolean; baseUrl: string; baseUrlPinned: boolean; instanceLabel: string } | null>(null);
   const [settingsEdits, setSettingsEdits] = useState<Record<string, unknown>>({});
   const [settingsError, setSettingsError] = useState<string | null>(null);
   // workspace sheet: real server workspaces + management state
@@ -178,7 +198,11 @@ export function App() {
     if (d === "workspace") post({ t: "list-workspaces" });
     if (d === "schedules") post({ t: "list-schedules" });
     if (d === "subs" && current) post({ t: "list-subagents", reqId: Date.now(), sessionId: current });
-    if (d === "settings") post({ t: "get-settings" });
+    if (d === "settings") {
+      post({ t: "get-settings" });
+      post({ t: "get-prefs" }); // 人话四条（扩展侧偏好）与服务器 schema 各自独立取
+      if (current) post({ t: "get-models", sessionId: current }); // 默认模型下拉的候选清单
+    }
   };
   const [trajFilter, setTrajFilter] = useState("");
   const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
@@ -408,6 +432,9 @@ export function App() {
         case "settings-describe":
           setSettingsData(m.data);
           setSettingsError(null);
+          break;
+        case "prefs":
+          setPrefs(m.data);
           break;
         case "settings-saved":
           if (m.ok) {
@@ -1509,11 +1536,17 @@ export function App() {
           )}
         </Sheet>
       )}
-      {/* settings sheet — schema-driven server settings form (wide) */}
+      {/* settings sheet — 设置域（需求三 UI 修正批）：四条人话设置 + 本体设置出口
+          + 「高级（服务器设置）」默认收起。原实现把服务端 schema 原样铺在最上层，
+          用户反馈"看不懂、啥都不能改"——内部字段名 + 大多只读。 */}
       {drawer === "settings" && (
-        <Sheet wide title="⚙️ 服务器设置" onClose={() => setDrawer("")}>
+        <Sheet wide title="⚙️ 设置" onClose={() => setDrawer("")}>
           <SettingsSheet
             data={settingsData}
+            prefs={prefs}
+            models={models}
+            permission={permission}
+            sessionId={current}
             edits={settingsEdits}
             error={settingsError}
             onEdit={(key, value) => setSettingsEdits((e) => ({ ...e, [key]: value }))}
@@ -1521,7 +1554,11 @@ export function App() {
               setSettingsError(null);
               post({ t: "save-setting", ns, patch, revision });
             }}
+            onPref={(key, value) => post({ t: "set-pref", key, value })}
+            onSelectInstance={() => post({ t: "select-instance" })}
+            onPickPermission={(preset) => current && post({ t: "set-session-permission", sessionId: current, preset })}
             onOpenExtSettings={() => post({ t: "open-settings" })}
+            onOpenBody={() => post({ t: "open-browser" })}
           />
         </Sheet>
       )}
@@ -2128,26 +2165,160 @@ function SubagentTranscript({ events }: { events: { event: { type: string; seq?:
  *  only (configured or not) — credential values are never shipped here. */
 function SettingsSheet({
   data,
+  prefs,
+  models,
+  permission,
+  sessionId,
   edits,
   error,
   onEdit,
   onSave,
+  onPref,
+  onSelectInstance,
+  onPickPermission,
   onOpenExtSettings,
+  onOpenBody,
 }: {
   data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } | null;
+  prefs: { defaultModel: string; autoStart: boolean; baseUrl: string; baseUrlPinned: boolean; instanceLabel: string } | null;
+  models?: ModelsData;
+  permission?: PermissionData;
+  sessionId?: string;
   edits: Record<string, unknown>;
   error: string | null;
   onEdit: (key: string, value: unknown) => void;
   onSave: (ns: string, patch: Record<string, unknown>, revision: number) => void;
+  onPref: (key: "defaultModel" | "autoStart", value: string | boolean) => void;
+  onSelectInstance: () => void;
+  onPickPermission: (preset: string) => void;
   onOpenExtSettings: () => void;
+  onOpenBody: () => void;
 }) {
-  if (!data) return <div className="muted pad">⏳ 正在读取服务器设置…</div>;
-  if (data.namespaces.length === 0) return <div className="muted pad">（该服务器未开放设置描述）</div>;
+  // 默认模型下拉的候选：宿主 models 目录（provider 分组）→ 设置值格式 "provider/model"。
+  const modelOptions = (models?.groups ?? []).flatMap((g) =>
+    (g.models ?? []).map((m) => ({ value: `${g.id}/${m.id}`, label: `${m.name ?? m.id}（${g.name ?? g.id}）` })),
+  );
+  const advanced = data?.namespaces ?? [];
   return (
     <div className="settings-list">
       {error && <div className="settings-error">⚠️ {error}</div>}
-      {!data.writable && <div className="muted pad tiny">⚠️ 服务器标记为只读（配置文件不可写），保存会被拒绝。</div>}
-      {data.namespaces.map((ns) => {
+
+      {/* 一、四条人话设置：改的是"我在 VSCode 里怎么用 DSH"（插件侧 dsh-vscode.*） */}
+      <section className="pref-list">
+        <div className="pref-title">常用（本 VSCode 插件的行为）</div>
+        {!prefs ? (
+          <div className="muted pad tiny">⏳ 正在读取扩展设置…</div>
+        ) : (
+          <>
+            <div className="pref-row">
+              <div className="pref-head">
+                <span className="pref-name">默认模型</span>
+                <span className="pref-hint">只影响新建会话；已有会话各用自己选的模型</span>
+              </div>
+              <div className="pref-ctl">
+                {modelOptions.length > 0 ? (
+                  <select
+                    className="pref-select"
+                    value={prefs.defaultModel}
+                    onChange={(e) => onPref("defaultModel", e.target.value)}
+                  >
+                    <option value="">（跟随最近使用）</option>
+                    {modelOptions.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                    {/* 设置里手填过的值不在目录里时也要能看见，不能被下拉静默改掉 */}
+                    {prefs.defaultModel && !modelOptions.some((o) => o.value === prefs.defaultModel) && (
+                      <option value={prefs.defaultModel}>{prefs.defaultModel}（当前值）</option>
+                    )}
+                  </select>
+                ) : (
+                  <>
+                    <span className="pref-value">{prefs.defaultModel || "（跟随最近使用）"}</span>
+                    <button className="btn" onClick={onOpenExtSettings}>去 VSCode 设置改</button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="pref-row">
+              <div className="pref-head">
+                <span className="pref-name">本会话权限</span>
+                <span className="pref-hint">当前会话的审批预设（不是全局设置）</span>
+              </div>
+              <div className="pref-ctl">
+                {sessionId && permission && permission.presets.length > 0 ? (
+                  <div className="pref-chips">
+                    {permission.presets.map((p) => (
+                      <button
+                        key={p.id}
+                        className={`chip${permission.value === p.id ? " on" : ""}`}
+                        onClick={() => onPickPermission(p.id)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="pref-value muted">{sessionId ? "未获取到（切换会话后重试）" : "先打开一个会话"}</span>
+                )}
+              </div>
+            </div>
+
+            <div className="pref-row">
+              <div className="pref-head">
+                <span className="pref-name">连哪个 DSH 实例</span>
+                <span className="pref-hint">桌面版 App（19387）或旧版 dsh web（3080）</span>
+              </div>
+              <div className="pref-ctl">
+                <span className="pref-value" title={prefs.baseUrl}>
+                  {prefs.instanceLabel || prefs.baseUrl}
+                  {prefs.baseUrlPinned ? "（已手动指定）" : ""}
+                </span>
+                <button className="btn" onClick={onSelectInstance}>切换…</button>
+              </div>
+            </div>
+
+            <div className="pref-row">
+              <div className="pref-head">
+                <span className="pref-name">找不到实例时自动打开桌面版</span>
+                <span className="pref-hint">关掉后只提示"没有检测到实例"，不自动拉起</span>
+              </div>
+              <div className="pref-ctl">
+                <label className="settings-check">
+                  <input
+                    type="checkbox"
+                    checked={prefs.autoStart}
+                    onChange={(e) => onPref("autoStart", e.target.checked)}
+                  />
+                </label>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* 二、出口：插件设置与本体设置分家 —— 这几条管的是插件，服务器设置在本体里 */}
+      <div className="settings-exits">
+        <button className="link-btn" onClick={onOpenBody}>
+          ↗ 打开 DSH 本体设置（桌面版 GUI 的「设置」）
+        </button>
+        <button className="link-btn" onClick={onOpenExtSettings}>
+          ↗ VSCode 设置页（连接地址 / 认证 / node 路径）
+        </button>
+      </div>
+
+      {/* 三、高级：服务器 settings/describe 的原样表单，默认收起（用户"看不懂"的那批字段） */}
+      <details className="settings-advanced">
+        <summary>
+          高级（服务器设置{advanced.length > 0 ? ` · ${advanced.length} 个命名空间` : ""}）
+        </summary>
+        <div className="settings-advanced-body">
+          {!data && <div className="muted pad tiny">⏳ 正在读取服务器设置…</div>}
+          {data && advanced.length === 0 && <div className="muted pad tiny">（该服务器未开放设置描述）</div>}
+          {data && !data.writable && (
+            <div className="muted pad tiny">⚠️ 服务器标记为只读（配置文件不可写），保存会被拒绝。</div>
+          )}
+          {advanced.map((ns) => {
         const dict = ns.schema?.dict ?? {};
         const fields = Object.entries(dict)
           .map(([field, refId]) => ({ field, ref: ns.schema?.refs?.[refId as number] ?? ns.schema?.refs?.[String(refId)] }))
@@ -2241,7 +2412,7 @@ function SettingsSheet({
                 );
               })}
             </div>
-            {data.writable && fields.length > 0 && (
+            {data?.writable && fields.length > 0 && (
               <div className="settings-foot">
                 <button className="btn btn-primary" disabled={!dirty} onClick={() => onSave(ns.ns, patch, ns.revision)}>
                   保存{dirty ? `（${Object.keys(patch).length} 项）` : ""}
@@ -2252,11 +2423,8 @@ function SettingsSheet({
           </details>
         );
       })}
-      <div className="settings-ext-link">
-        <button className="link-btn" onClick={onOpenExtSettings}>
-          扩展自身设置（服务器地址 / 认证）→ VSCode 设置页
-        </button>
-      </div>
+        </div>
+      </details>
     </div>
   );
 }

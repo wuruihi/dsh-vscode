@@ -46,7 +46,8 @@ pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例
 - 改 `webview/`：`pnpm build` + VSCode 里 `Developer: Reload Window` 手测。
 - **打包前必须 `pnpm compile` 0 错**（硬门槛，不是参考项）：esbuild **不校验类型**，类型错照样能打包并安装。2026-09-30 实测教训——会话行 `⋯` 菜单因漏打 `menu-open` 类而不生效，只有 `tsc` 的"变量未使用"把它暴露出来，当时那一版已经打包安装过了。
 - **每次给用户安装必须升版本号**：同版本号覆盖安装，VS Code **不会重新加载**扩展（文件换了但宿主里跑的是旧的）。2026-09-30 实测：连续三轮用同一个 0.19.5 覆盖安装，用户连看三轮"没改"，实际代码早已生效在磁盘上。
-- **改 UI 必须先自己截图核对再交付**：用 `docs/mockups/harness.html`（桩宿主 + 真实构建产物）+ 无头 Edge 出图（**必须独立 `--user-data-dir`，否则复用实例会让截图静默失败留旧图**）。截图自检已抓到过真 bug（JSX 里的 `/* … */` 被当正文渲染）。**没有看过图的 UI 改动不得声称"改好了"**。
+- **改 UI 必须先自己截图核对再交付**：用 `docs/mockups/harness.html`（桩宿主 + 真实构建产物）+ 无头 Edge 出图（**必须独立 `--user-data-dir`，否则复用实例会让截图静默失败留旧图**）。截图自检已抓到过真 bug（JSX 里的 `/* … */` 被当正文渲染）。**没有看过图的 UI 改动不得声称"改好了"**。参数：`?w=`（面板宽）/`drawer=`（直接开抽屉）/`long=1`（超长标题）/`goal=0`（无目标态）。**面板宽用 `?w=` 控制，不要靠 `--window-size` 调窄**——headless 下二者不是同一个 viewport，会得到假的"溢出"截图（2026-09-30 踩过）。
+- **"改了界面但用户没看到"的第一嫌疑是资源缓存，不是 CSS**（2026-09-30 判定）：`dist/webview.js` 的 URI 跨重装完全不变，VS Code 有资源缓存 ⇒ 升级后可能继续跑**上一版** bundle。现在该 URI 带 `?v=<版本号>`（`src/ui/panel.ts`）且 bundle 首行打印版本号；**仍必须**每次升版本号 + 让用户 `Developer: Reload Window`。
 - 涉及协议交互：先 `pnpm smoke` 再手测。
 - **每次 DSH 升级后必跑 `pnpm args:audit`**（smoke 只盖连接层主干，盖不到
   `commands/execute`、`subagents/list` 这类业务端点——v0.18.3 的权限切换
