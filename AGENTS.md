@@ -47,9 +47,11 @@ pnpm regress:locate # locate.ts 离线回归（26 项）
 - **每次 DSH 升级后必跑 `pnpm args:audit`**（smoke 只盖连接层主干，盖不到
   `commands/execute`、`subagents/list` 这类业务端点——v0.18.3 的权限切换
   失效就是这样漏过去的）。该脚本从**已安装的 DSH** 解析网关描述符当 ground
-  truth，与插件实际发出的三处逐条比对：`client.ts` 的 `v012Request` 调用点、
+  truth，与插件实际发出的四处逐条比对：`client.ts` 的 `v012Request` 调用点、
   `remote.ts` 的 `openStream` 流开帧、`client.ts` 的 `{request}` 包裹集合
-  （后两处 2026-09-30 补，此前是覆盖盲区）。漂移即非零退出；不连服务器、不需
+  `wrapped` 与会话级写集合 `SESSION_SCOPED_WORKSPACE_WRITES`（后两处
+  2026-09-30 补，第四处随需求三第一批加入；覆盖点 29 = 11 + 6 + 8 + 4）。
+  漂移即非零退出；不连服务器、不需
   token。`DSH_ROOT` 可覆盖解析目录。**已知并在代码里显式降级的漂移走
   `HANDLED_DRIFT` 白名单**（当前只有 `subagents/list`：0.2.0 已移除，插件首次
   失败即告警并停调，会话树改由 `session/list` 的 `origin`/`parentSessionId`

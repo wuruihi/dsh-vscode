@@ -67,7 +67,7 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 **v012 实测线协议事实（2026-09-02 首测于 0.1.2-alpha.4；2026-09-17 复测于 0.1.5-rc.2）**：
 - 一元 RPC 的 `args` 必须与描述符**逐参数精确匹配**（`dsh-api-gateway` assertExactArguments）：每个业务参数一个键，键名 = 参数名或 lookup wire 名。多键/缺键都报 `gateway/arguments-invalid`。
 - **参数名与包裹方式随版本漂移**：0.1.5-rc.2 实测 `commands/execute` 必填字段由 `images` 改名为 `submittedAttachments`；`subagents/list` 由 request 包裹改回平铺。任何一次 DSH 升级都要重跑参数审计，不要假设契约稳定。
-- 单 `request` 参数的方法 → `args:{request:{...}}`：session/create、prompt、cancel、rename、fork、attachment、updateQueue、selectModel、page、workspace/create、archiveSession、skills/list。
+- 单 `request` 参数的方法 → `args:{request:{...}}`：session/create、prompt、cancel、rename、fork、attachment、updateQueue、selectModel、page、workspace/create、archiveSession、unarchiveSession、pinSession、unpinSession、skills/list。
 - 特例：`session/list` → `args:{_request:{}}`（保留参数名 `_request`）；`modelCatalog`/`agentPresets/list` → `args:{}`。
 - `agent: Agent` 参数走 lookup，wire 名 `agentId`：agentPresets/select、commands/list、commands/execute。**commands/execute 的 `submittedAttachments` 是网关必填字段**（无附件也传 `[]`）。
 - `subagents/list` 在 0.1.5-rc.2 改为**平铺** `args:{parentSessionId}`（0.1.2-alpha.x 曾是 `args:{request:{parentSessionId}}`）——同一方法跨 RC 版本包裹方式会变，升级后必须重跑 args 审计。
@@ -98,7 +98,7 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 
 ### 3.3 用到的方法
 
-`host.describe`（探活）、`workspace.list`/`workspace.create{path}`、`session.list`/`session.create{workspaceId|cwd, agentPreset?}`/`session.prompt{sessionId, mode:"queue"|"steer", content:[{type:"text",text}|{type:"image",mediaType,data}], clientTimeZone?}`/`session.cancel{sessionId}`/`session.history{sessionId, maxMessages?, beforeSeq?}`/`session.models`/`session.selectModel{sessionId,provider,model,reasoningEffort?}`/`session.rename`/`session.updateQueue`
+`host.describe`（探活）、`workspace.list`（**v012 无此端点**：`client.ts` 内部转 `workspacesOnce()` → `workspace/follow` baseline，详见 §3.6）/`workspace.create{path}`/`workspace.pinSession{sessionId}`/`workspace.unpinSession{sessionId}`/`workspace.archiveSession{sessionId}`/`workspace.unarchiveSession{sessionId}`、`session.list`/`session.create{workspaceId|cwd, agentPreset?}`/`session.prompt{sessionId, mode:"queue"|"steer", content:[{type:"text",text}|{type:"image",mediaType,data}], clientTimeZone?}`/`session.cancel{sessionId}`/`session.history{sessionId, maxMessages?, beforeSeq?}`/`session.models`/`session.selectModel{sessionId,provider,model,reasoningEffort?}`/`session.rename`/`session.updateQueue`
 
 ### 3.4 已知坑（必须内置对策）
 
@@ -127,6 +127,18 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 - **切实例必须重建对象**：`DshLifecycle` / `RpcClient` / `Auth` 的 baseUrl 都是构造即固定；`Auth` 的 cookie **按 authority 分键**（cookie 名含 authority 哈希，跨地址必然 401）。
 - **兜底不默认起服务**：两处都不通时提示「打开桌面版 App」；`autoStart` 仍保留旧 CLI 拉起，但**必须显式警告**：①会与运行中的桌面版对同一个会话库形成第二个写者；②0.1.5 少三组 bundle 且读不了 v4 会话。
 - **红线**：不得把「用桌面版 CLI 起 web profile」当常规兜底——它自带 pnpm + 0.2.0 的 installAnchor，会重装 `~/.dsh/profiles/node_modules`（现为 0.1.5 树），**可能永久打破旧 CLI**；`dsh.cmd` 也不能用 `Start-Process -FilePath` 直接拉（CreateProcess 不执行批处理）。
+
+### 3.6 会话列表状态与搜索（2026-09-30，需求三第一批）
+
+**读路径（v012 无 `workspace/list` 端点，@19387 实测 404）**：`client.ts` 的 `workspace.list` 分支内部转 `workspacesOnce()`——一次 `workspace/follow` **baseline** 帧，形状 `{type:"item", value:{type:"baseline", value:{items:[{workspaceId,path,title,sessionIds,createdAt,updatedAt}], archivedSessionIds:[…], pinnedSessionIds:[…]}}}`。**三字段必须一起取**：`archivedSessionIds`/`pinnedSessionIds` 是"归档/置顶"状态的唯一权威来源（此前 `remote.ts:162` 只取 `items`，两个集合被丢弃 ⇒ 插件侧归档状态恒空、归档形同未生效——本批即修此 bug）。
+
+**写路径**：`workspace/pinSession|unpinSession|archiveSession|unarchiveSession` 均为 `{request:{sessionId}}`（archive 另有可选 `stopActivity`）；legacy 仍传 `workspaceId`（v012 分支内丢弃）。回执只带**一半**集合（pin/unpin → `pinnedSessionIds`；archive/unarchive → `archivedSessionIds`），且**归档会连带丢弃该会话的置顶** ⇒ 写成功后一律**重读 baseline**，不做局部推断。错误语义：`*/not-found`＝会话不存在；`gateway/bad-request`＝已归档的会话不能置顶；`workspace/session-active`＝活动会话不能归档。
+
+**搜索**：`session/search` 在本部署被禁用（`openAt:"never"`），开启需改 DSH 配置（红线）⇒ 插件改用**宿主侧按需过滤**：webview 发 `{t:"search-sessions", reqId, query}`，宿主在 `sessionRows` 上按 title/cwd/工作区名过滤（路径统一 `normalizePath()`）后回 `{t:"search-results", reqId, items}`；**不下发全量列表**（AGENTS.md 硬规则 1），webview 只采纳最新 `reqId` 的回复。
+
+**能力协商**：`{t:"caps", flavor:"v012"|"legacy"}` 与既有 `{t:"conn"}` 并列下发（webview 就绪 + 连接态变更各一次）。legacy 无 pin/unpin/unarchive ⇒ 隐藏这三个动作与"显示归档"开关；webview 的 `flavor` 初值 `undefined` 且按 legacy 处理（避免按钮闪现）。
+
+**交付物点击语义（统一口径）**：面板内清单/卡片点击一律 `open-file`；要看变更才用行内按钮发 `open-diff`（需该文件有 live edit 的 `callId`）。宿主侧命令 `dsh-vscode.showSessionChanges`（QuickPick → diff）以 `TurnEdits.sessionId` 限定**本会话**，切会话即 `resetSession()` 清空。
 
 ## 4. 功能规格
 
