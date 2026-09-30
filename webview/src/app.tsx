@@ -2310,7 +2310,7 @@ const TurnView = ({ item, sessionId }: { item: TurnItem; sessionId?: string }) =
           </div>
         </div>
       )}
-      /** 需求三 UI：不再显示 role 行（气泡/左侧竖线已表明身份），每条省一行。 */
+      {/* 需求三 UI：不再显示 role 行（气泡/左侧竖线已表明身份），每条省一行 */}
       {segs.map((s, i) => {
         if (s.kind === "thinking") {
           const t = stripSystemContext(s.text ?? "");

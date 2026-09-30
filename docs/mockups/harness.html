@@ -28,14 +28,30 @@
   /* webview 产物挂载到 #root（原先给的是 #panel，导致 React 没挂上、整屏空白） */
   #root { width: var(--panel-w, 640px); height: 100%; display: flex; flex-direction: column; overflow: hidden;
           border: 1px solid #3c3c3c; border-radius: 6px; }
-  #log { position: fixed; left: 8px; bottom: 8px; max-width: 44vw; max-height: 22vh; overflow: auto;
+  #log { display: none; position: fixed; left: 8px; bottom: 8px; max-width: 44vw; max-height: 22vh; overflow: auto;
          font: 11px/1.45 Consolas, monospace; color: #8a8a8a; background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; }
-  #hint { position: fixed; right: 8px; bottom: 8px; font: 11px/1.5 Consolas, monospace; color: #8a8a8a;
+  #hint { display: none; position: fixed; right: 8px; bottom: 8px; font: 11px/1.5 Consolas, monospace; color: #8a8a8a;
           background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; }
 </style>
 </head>
 <body>
 <div id="stage"><div id="root"></div></div>
+<div id="bootstate" style="position:fixed;left:8px;top:4px;color:#f48771;font:12px Consolas,monospace;z-index:99">JS 未执行</div>
+<script>
+  // 独立探针：即使其它内联脚本解析失败也要能报错（放在所有脚本最前）
+  window.addEventListener("error", function (e) {
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:8px;top:26px;right:8px;color:#f48771;font:12px Consolas,monospace;white-space:pre-wrap;z-index:99";
+    d.textContent = "ERR: " + (e.message || e.reason || e.error) + "  @" + String(e.filename || "").split("/").pop() + ":" + e.lineno;
+    (document.body || document.documentElement).appendChild(d);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:8px;top:26px;right:8px;color:#f48771;font:12px Consolas,monospace;white-space:pre-wrap;z-index:99";
+    d.textContent = "REJECT: " + (e.reason && e.reason.message ? e.reason.message : e.reason);
+    (document.body || document.documentElement).appendChild(d);
+  });
+</script>
 <div id="log"></div>
 <div id="hint">查询参数：?w=640（面板宽）&amp;drawer=sessions|jobs|settings|""（打开哪个抽屉）</div>
 
@@ -54,7 +70,7 @@
   window.__dshApi = api;
   window.acquireVsCodeApi = () => api;
   const logEl = document.getElementById("log");
-  const log = (s) => { logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+  document.getElementById("bootstate").textContent = "JS 已执行"; const log = (s) => { logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; };
   // 让空白屏变成可诊断的：任何脚本错误与未捕获拒绝都写进左下角日志（截图即可见）
   window.addEventListener("error", (e) => log("✗ error: " + (e.message || e.error) + " @" + (e.filename || "").split("/").pop() + ":" + e.lineno));
   window.addEventListener("unhandledrejection", (e) => log("✗ reject: " + (e.reason && e.reason.message ? e.reason.message : e.reason)));
@@ -77,7 +93,7 @@
   const HISTORY = [
     { event: { type: "user/message", seq: 1, time: Date.now() - 60000, data: { content: [{ type: "text", text: "1/3 屏宽，最高频就是发消息、切会话、看你在干什么" }], source: { kind: "user" } } } },
     { event: { type: "turn/start", seq: 2, time: Date.now() - 59000, data: { turn: 1 } } },
-    { event: { type: "assistant/message", seq: 3, time: Date.now() - 58000, data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "先说结论，再给分层。段落之间留 10px，读起来不糊成一块。\n\n### 结构定稿要点\n\n- 纵向空间只给主任务\n- 管理动作收进一个抽屉按域分 tab\n\n```bash\nnode scripts/fold-regress.cjs   # 24/24\n```\n\n> 可读性来自层级与节奏，不来自装饰。\n\n以上" }] } } },
+    { event: { type: "assistant/message", seq: 3, time: Date.now() - 58000, data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "先说结论，再给分层。段落之间留 10px，读起来不糊成一块。" }] } } } },
     { event: { type: "turn/end", seq: 4, time: Date.now() - 57000, data: { turn: 1 } } },
   ];
   const TOOLS = [
