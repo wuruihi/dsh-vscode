@@ -643,6 +643,44 @@ export function App() {
     return undefined;
   }, [items]);
 
+  // 域 tab（会话 / 运行 / 设置）+ 会话域子分组（会话列表·工作区·搜索·提醒·产出）。
+  // 注意：必须交给 Sheet 在抽屉内部渲染，放在 App 流里会被遮罩盖住（2026-09-30 实测）。
+  SHEET_TABS =
+    drawer === "" ? null : (
+      <>
+        <div className="domain-tabs">
+          {(
+            [
+              ["sessions", "会话"],
+              ["jobs", "运行"],
+              ["settings", "设置"],
+            ] as const
+          ).map(([d, label]) => (
+            <button key={d} className={`domain-tab${domainOf(drawer) === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {domainOf(drawer) === "sessions" && (
+          <div className="subchips">
+            {(
+              [
+                ["sessions", "会话列表"],
+                ["workspace", "工作区"],
+                ["search", "搜索"],
+                ["schedules", "提醒"],
+                ["produced", "产出"],
+              ] as const
+            ).map(([d, label]) => (
+              <button key={d} className={`chip${drawer === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </>
+    );
+
   return (
     <div className="app">
       {/* header — two rows: session row + tool row (competitor layout) */}
@@ -792,8 +830,8 @@ export function App() {
           </div>
         </div>
       )}
-      {/* 需求三 UI：抽屉域 tab（统一心智模型） */}
-      {drawer !== "" && (
+      {/* 需求三 UI：抽屉域 tab（在抽屉内部渲染，见 SHEET_TABS） */}
+      {false && drawer !== "" && (
         <>
           <div className="domain-tabs">
             {(
@@ -2213,6 +2251,10 @@ function effectiveSetting(ns: SettingsNs, field: string, ref: any): unknown {
 /** Right-side sheet (competitor panel interaction, probed from its CSS):
  *  fixed scrim + right-anchored sheet, Esc / click-scrim closes, 0.16s
  *  slide-in. wide = 620px (trajectory / subagent transcript), else 400px. */
+/** 抽屉内联的"域 tab"节点：由 App 每次渲染时写入，Sheet 在头部下方渲染它。
+ *  （必须渲染在抽屉内部——渲染在 App 流里会被 .sheet-overlay 盖住。） */
+let SHEET_TABS: ReactNode = null;
+
 function Sheet({ title, onClose, wide, headControls, children }: { title: ReactNode; onClose: () => void; wide?: boolean; headControls?: ReactNode; children: ReactNode }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => {
@@ -2231,6 +2273,7 @@ function Sheet({ title, onClose, wide, headControls, children }: { title: ReactN
             <Icon name="x" size={13} />
           </button>
         </div>
+        {SHEET_TABS && <div className="sheet-tabs">{SHEET_TABS}</div>}
         <div className="sheet-body">{children}</div>
       </div>
     </div>

@@ -1190,7 +1190,7 @@ body { line-height: 1.5; }
    思路：面板足够宽时，把抽屉占的宽度从 .app 的右侧让出来（:has 选择器），
    抽屉背景变透明、只有自身可点 —— 画布与输入区都保持可交互。
    浏览器若不支持 :has()，自动退回原来的覆盖式抽屉（安全降级）。 */
-@media (min-width: 760px) {
+@media (min-width: 620px) {
   .app:has(.sheet-overlay) { padding-right: 420px; }
   .app:has(.sheet-overlay):has(.sheet-wide) { padding-right: 620px; }
   .app:has(.sheet-overlay) .sheet-overlay {
@@ -1203,3 +1203,10 @@ body { line-height: 1.5; }
     border-left: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
   }
 }
+/* 抽屉内部：域 tab 容器（必须渲染在抽屉内，否则被遮罩盖住） */
+.sheet-tabs { flex: none; border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3)); }
+.sheet-tabs .domain-tabs { border-bottom: 0; }
+/* 表头允许换行：搜索框一行、chips 一行 —— 三个 chip 不再挤成三行 */
+.sheet-head { flex-wrap: wrap; row-gap: 4px; }
+.sheet-controls { flex-wrap: nowrap; }
+.chips { flex-wrap: nowrap; }
