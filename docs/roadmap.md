@@ -2,6 +2,53 @@
 
 > 前置结论见 competitor-analysis.md。战略前提：**用户将持续升级 DSH 到最新版本**——协议自适应是一切工作的地基。
 > 执行纪律：每 Phase 结束跑 pnpm compile / pnpm build / 对应回归；渲染护城河（dshui.tsx / markdown.tsx / 修复管线）在 Phase 0/1 零改动。
+>
+> **Phase 0 / Phase 1 状态：已落地**（协议双 flavor 自适应；视觉对齐；Phase 2 的部分条目也已顺带完成：队列编辑、图片附件、会话列表状态点、goal 进度卡、代码高亮…）。下方 Phase 0-1 保留为历史记录，不再动工。
+
+## 需求三（当前）— 对照桌面版能力补强（2026-09-30 盘点，**待用户圈选**）
+
+**盘点口径**：桌面版 0.2.0-rc.2（asar 内 `dsh-api-remotes` 网关描述符）共 **136 个端点**，插件源码引用 **20 个**，未引用 **116 个**；桌面版另带 **79 个能力包**（客户端 UI / 功能 bundle）。**未引用 ≠ 缺口**——大量端点是桌面专属界面（插件管理器、设置面板、账户、终端、目录选择器、浏览器侧栏），在 VSCode 场景要么重复、要么不该做。下表只留"用户真会用到"的。
+**代价口径**：低 = 半天内；中 = 约 1 天；中高 = 约 2 天（含手测与回归）。
+
+### 第一批（建议先做：价值/代价比最高）
+
+| # | 优化项 | 依赖端点/包（已核对存在） | 价值 | 代价 |
+|---|---|---|---|---|
+| 1 | **跨会话搜索** | `session/search`（桌面版后端 = `dsh-session-query-sqlite` 的 SQLite FTS5） | 高：本机已有 93 个会话，现在只能肉眼翻 | 中：命令 + 结果列表 + 点击跳转会话 |
+| 2 | **会话整理：置顶 / 归档 / 取消归档** | `workspace/pinSession` `unpinSession` `archiveSession` `unarchiveSession` | 高：列表不再混杂，顺带能清"未分组"噪音 | 低：列表项动作（右键/悬停） |
+| 3 | **交付物卡片：本次会话改了哪些文件** | `dsh-client-ui-deliverables`（changed-files 卡 + 逐文件对比 + 正文文件引用可点）、`workspaceFiles/changes` | 高：验收场景一眼看全 | 中：卡片 + 复用已有原生 diff |
+
+### 第二批（补现有功能的洞）
+
+| # | 优化项 | 依赖端点/包 | 价值 | 代价 |
+|---|---|---|---|---|
+| 4 | 子代理抽屉在 0.2.0 上的真修复 + 续跑/中断 | `subagents/prompt` `subagents/interruptByParent`（`subagents/list` 已移除 → 当前降级为空列表） | 中高 | 中 |
+| 5 | 计划模式评审链路（计划卡确认/编辑） | 0.2.0 走 `userQuestions/*` + `plan` 投影；`$events/result` 应答通路已实测可用 | 中高 | 低中（需一次真实交互实测） |
+| 6 | Goal 控制（暂停/继续/完成/清空） | `goals/create` `edit` `pause` `resume` `complete` `clear` `get` | 中 | 低（当前只有只读 GoalBar） |
+| 7 | 后台任务列表 + 中断 | `job/list` `follow` `kill` + `dsh-client-ui-jobs` | 中 | 中 |
+| 8 | Agent Teams 编队看板（roster + 任务板） | `agentTeam` 投影 + `dsh-experimental-client-ui-agent-team` | 中高（你在用 Agent Teams） | 中高 |
+
+### 第三批（锦上添花）
+
+| # | 优化项 | 依赖端点/包 | 价值 | 代价 |
+|---|---|---|---|---|
+| 9 | 定时提醒管理 | `schedule/list` `update` `delete` `history` `catalog` + `dsh-client-ui-schedule` | 中 | 中 |
+| 10 | 消息点赞 / 点踩 | `messageFeedback/put` `list` `delete` | 低 | 低 |
+| 11 | 余额 / 账户信息 | `account/getBalance` `getProfile` | 低中（花钱可见性好） | 低 |
+| 12 | 工作流运行卡片 | `workflow/*` 事件 + `dsh-client-ui-workflow-run` | 中 | 中 |
+| 13 | DSH 插件 / bundle 管理 | `pluginManager/*` | 中 | 中高 |
+| 14 | 打字机效果（按 `assistant/message` 内 `stream[].dt` 回放） | 0.2.0 消息时间线 | 低 | 低中 |
+
+### 明确不做（连同理由）
+
+- **终端面板**（`terminal/*`）：VSCode 自带终端更强，重复造。
+- **文件树 / 文档预览 / 内置浏览器**（`workspaceFiles/list|read`、`sidebar-documentpreview`、`sidebar-browser`）：VSCode 原生更好。
+- **目录选择器**（`directoryPicker/*`）：VSCode 原生。
+- **DSH 设置面板**（`settings/*`）：本体设置更全，插件做一半反而让用户分不清"该在哪改"。
+- **语音输入 / 转写**（`dsh-experimental-voice-input`、`speech-to-text`）：IDE 场景不合适。
+- **动态插件运行面板**（`dynamicCordisRunner/*`）：属于 DSH 本体的开发工具。
+
+**顺手核对（非新功能）**：审批/提问应答走 `$events/result` 载体（legacy `/api/respond` 路由已在 0.2.0 消失，只影响 0.1.1-rc.x）→ 实测 HTTP 200 受理回执，**0.2.0 上可用**。
 
 ## Phase 0 — 协议自适应层（最先动工）
 
