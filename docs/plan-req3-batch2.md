@@ -1,57 +1,82 @@
-# 需求三·第二批 实施方案 v1（子代理面板 / 计划评审 / Goal 控制 / 后台任务 / Agent Teams / 旧 CLI 收尾）
+# 需求三·第二批 实施方案 v2（子代理面板 / 计划评审验证 / Goal 控制 / 后台任务 / 旧 CLI 收尾）
 
-> **审查对象**：本文件。审查标准见 §8。实施者需零上下文可读。
-> **状态**：草案 v1（2026-09-30）→ 待独立子代理审查 → 按意见修订 → 用户确认 → 执行。
-> **仓库**：`D:\03-Projects\Plugins\dsh-vscode`。**口径**：所有"实测"均为 2026-09-30 在本机（DSH 桌面版 0.2.0-rc.2 @19387）的**只读**观测；会话/子代理数量随时间变化。
+> **审查对象**：本文件（v2 = 已按独立审查意见修订）。实施者需零上下文可读。
+> **状态**：v1 → 独立子代理审查（7 维度 5 FAIL，10 条阻塞项 + 8 条建议）→ **v2 修订完成，待用户确认执行**。审查者的关键断言已由我**独立复核并实测**（见 §0.5）。
+> **范围（用户 2026-09-30 裁定）**：本批做 **T4 + T5（验证）+ T6 + T7 + T-CLI**；**T8（Agent Teams 编队抽屉）延后单独排**。
+> **口径**：所有"实测"为 2026-09-30 在本机 DSH 桌面版 0.2.0-rc.2 @19387 的**只读**观测。
 
 ---
 
-## 0. 目标与建议范围
+## 0. 目标与本批的真实性质
 
-第二批的本质与第一批相同：**桌面版升级后，插件里有几处功能其实已经"静默失效"**，另几处是本体有、插件没有的洞。
+**一句话**：桌面版 0.2.0 换掉了子代理与任务两条链路，插件里这两处**已经彻底失效**（不只是"列表空"）；本批把它们接到正确端点，另把 Goal 从"只读"变"可控"，并收尾旧 CLI 删除后的文档与文案。
 
 | # | 做什么 | 性质 | 代价 |
 |---|---|---|---|
-| 4 | **子代理面板真修复**：数据源改用 `session/list` + 父会话 `subagentCatalog` 投影；中断改用 `subagents/interruptByParent` | 修坏（抽屉在 0.2.0 恒空） | 中 |
-| 5 | **计划评审链路验证/修复**：确认 0.2.0 的计划评审提问能被插件完整应答，不通则改用 `userQuestions/answer` | 验证 + 可能修 | 低 |
-| 6 | **Goal 控制**：GoalBar 加暂停 / 继续 / 完成 / 清空 / 建目标（`goals/*`） | 补洞（现只读） | 低 |
-| 7 | **后台任务面板**：`job/list` 是**流式**端点，接上它 + `job/kill` | 修坏（0.2.0 上很可能恒空，同"归档"那类） | 中 |
-| 8 | **Agent Teams 编队抽屉**：`agentTeam` 投影（成员 + 任务）只读展示 | 补洞 | 中高 |
-| 9 | **旧 CLI 删除后的收尾**：文档与提示文案（用户 2026-09-30 自删 `C:\Users\wurui\dsh`）；**不删代码** | 收尾 | 低 |
+| T4 | **子代理链路真修复**：列表（投影 + session/list）、**转录（子代理地址）**、追问（`subagents/prompt`）、打断（`subagents/interruptByParent`） | 修坏（4 条路径全失效） | 中 |
+| T5 | 计划评审链路**验证**（判据已按审查加固；不通才改 `userQuestions/answer`） | 验证 | 低 |
+| T6 | Goal 控制：暂停 / 继续 / 完成 / 清空 / 建目标 | 补洞 | 低 |
+| T7 | **后台任务面板真修复**：`job/list` 流式接入 + 终止 + 大输出路径可点 | 修坏（0.2.0 永不进数据） | 中 |
+| T-CLI | 旧 CLI 删除后的文案/文档收尾（**不删代码**） | 收尾 | 低 |
+| T8 | Agent Teams 编队抽屉 | **延后**（实测 45/45 会话都是 lead-only，当前无价值） | — |
 
-**建议先做 4 + 6 + 7 + 9，5 顺带验证，8 视你兴趣单独排**——理由：4/7 是"功能已经坏了"，6 只读变可控且成本最低，9 只要十分钟；8 是新界面，投入最大而你现在主要在 DSH 本体里管编队。
-**明确不做**：编队控制（加/减成员、派任务；本批只读展示）、`session/search` 全文检索（第一批已定）、改 DSH 配置、任何系统配置变更。
+**明确不做**：编队控制、全文检索、改 DSH 配置、`queue` 帧改由 `inbox` 驱动（**登记待查**，见 §5-登记项）。
 
 ---
 
-## 1. 事实基础（实测，2026-09-30）
+## 0.5 审查修订记录（v1 → v2）
 
-**F1 端点（0.2.0 描述符 + 内层 schema 实测）**
+### 必须修改（10 条，全部采纳）
 
-1. `subagents/interruptByParent` args ＝ **平铺三键** `{childSessionId, parentSessionId, mode}`，其中 `mode` 的 schema 是 `literal("continuable")` —— **只接受这一个值**（我曾试 "cancel"/"interrupt"，均 `gateway/input-invalid`）。
-2. `subagents/prompt` args ＝ `{request}`（request 包裹），request 类型名 `SubagentPromptRequest`（内层字段未取到，见 §3 T4 的确认步骤）；回执 `{messageId}`。
-3. `subagents/list` **已移除**（0.2.0）——插件 `client.ts:237` 命中 `subagentsListUnsupported` 后返回 `{entries: []}`，**子代理抽屉因此在 0.2.0 上恒为空**。
-4. `goals/create` ＝ `{agentId, request:{objective, maxGoalRounds?}}`；`goals/edit` ＝ `{agentId, ref, request:{objective?, maxGoalRounds?}}`；`goals/pause|resume|complete|clear` ＝ `{agentId, ref}`；`ref` 的 schema ＝ `{id, revision}`；`goals/get` ＝ `{agentId}`（无目标时 `ok:true` 且 `value` 为空）。
-5. `job/list`、`job/follow` 都是 **stream 端点**（一元直调 `job/list` → `gateway/signature-invalid: stream Remote methods must be opened through the stream carrier`）。`job/follow` request ＝ `{sessionId?, jobId, from?}`；作业项含 `output:{total, earliest, spillPaths?}`。`job/kill` ＝ `{request}`。
-6. `userQuestions/answer` ＝ **平铺** `{agentId, callId, answer:{answers:[{id, selected:[…], custom?}]}}`；`userQuestions/attachWait` ＝ `{agentId, callId}`。
+| 项 | 审查结论 | 我的独立复核 | v2 落地 |
+|---|---|---|---|
+| **M1** | 子代理转录必须用**子代理地址**；插件现在用 session 地址必被拒 | **实测证实**：`session/page` 用 `{kind:"session",sessionId:<child>}` → `session/agent-busy: subagent Sessions require their durable parent address`；换成 `{kind:"subagent",parentSessionId,childSessionId,mode:"continuable"}` → 通过（走到业务层报 cursor 越界）。address union schema 亦已取出 | T4 步骤 1-2（client.ts `v012History` 增地址分支；remote.ts `snapshotOnce`/`openFollow` 参数化地址） |
+| **M2** | `subagents/*` 必须升为**一级路径**；`session.prompt/cancel`-on-child 同属被拒族 | **schema 证实**：`subagents/prompt` request ＝ `{requestId, parentSessionId, childSessionId, mode:literal("continuable"), delivery:"queue"\|"steer", content:[…], clientTimeZone?}`；`interruptByParent` result ＝ `{accepted:true}`。v1 的 F1-2「字段未取到」与"已是工作路径"两处断言**均错** | T4 步骤 3-4 |
+| **M3** | 条目 `activity` 必须是 `"active"`，否则打断按钮永不出现 | **读码证实**：`app.tsx:1160`/`1210` 判 `=== "active"` | T4 步骤 1 代码 |
+| **M4** | `job/list` 帧型是 `{type:"rows",jobs}` 全量帧（无 baseline/增量）；请求＝`{sessionId}`；钩子要镜像 `desiredFollow` | **schema 证实**：`job_list_parameter_0 = {sessionId}`、`job_list_result = {type:literal("rows"), jobs:[…]}`；`remote.ts:297-316 openPersistentStreams()` 已有 `desiredFollow` 模式可镜像 | T7 步骤 1-2 |
+| **M5** | goal 的 ref 在 `value.goal` 内层，不是投影顶层 | **schema 证实**：`goalProjectionSchema = {goal:{id,revision,objective,phase,blockedReason?,maxGoalRounds}, roundsStarted,…} \| null` | T6 步骤 2 |
+| **M6** | §2 漏了 `src/extension.ts` 的入站分发（273-284）与 protocol 入站成员 | 读码证实（入站 `case` 是唯一分发点） | §2 表 + T6/T7 步骤 |
+| **M7** | `args:audit` 只扫 `client.ts`/`remote.ts`，覆盖点最多 29→**30**，不是 33+ | 读码 + 今日实跑（29 点 0 漂移）一致 | §4 |
+| **M8** | T5 的 `question/resolved` 判据不成立（该帧只在 `$events` 的 cancel 路径合成） | 读码证实（`remote.ts:421-426`） | T5 改为**三条同时成立**的判据 |
+| **M9** | T9 验收目标串「一键拉起旧版」全仓 0 命中；真实失效承诺 11 处 | 我的检索一致（命中 0） | T-CLI 改白名单逐处确认 |
+| **M10** | T8 不能只靠推投影（非当前会话 projection 被丢）；实测 45/45 会话都是 lead-only | 读码证实 `manager.ts:1003-1009` 只转发当前会话 | T8 已延后；若将来做，按"打开时按需拉投影 + 三态空态" |
 
-**F2 投影（`session/projections` 实测返回 20 个键）**
+### 被证伪的 v1 断言（14 条，已全部更正）
+F1-2「prompt 字段未取到」｜F3-2「转录可用」｜「session.prompt-on-child 是工作路径」｜GoalBar 行号 1948（实为 2146 定义/696 使用）｜jobs 渲染行号 860（实为 1048-1079）｜「70 行多属该会话」（实测 6/71）｜「29→33+」｜「baseline/增量帧」｜R1（job 字段未知，实为已知）｜R2（prompt 字段未知⇒不切换，**必须切**）｜T6「ref 直接取」层级｜T8 空态前提｜T-CLI 目标串不存在｜T5 `question/resolved` 判据。
 
-- 键全集：`title, goal, tokenUsage, contextPressure, contextBreakdown, inbox, sessionStats, turnOutline, agentPreset, userQuestions, subagentCatalog, subagentTiming, subagent, agentTeam, permissions, todos, plan, modelSelection, sessionListMetadata, imageLimits`。
-- `subagentCatalog` 实测值：`[{id:"fc1b2cd5…", mode:"continuable", label:"Audit VSCode extension internals", createdAt:…}, …]` ← **子代理列表的权威来源**。
-- `agentTeam` 实测值：`{members:[{id:"session-246fce77…", name:"lead", role:"lead", phase:"active"}], tasks:[]}`。
-- `goal` 投影已含 `{id, revision, objective, phase, maxGoalRounds, blockedReason?}`（`app.tsx:1948` 的 GoalBar 已在用）⇒ **`ref` 可直接从投影取**。
-- `sessionStats` ＝ `{turns, steps, llmMs, toolMs, ttftMs, …}`；`turnOutline` ＝ `[{turn, seq, prompt, response}]`；`userQuestions` ＝ `{active:[], settled:[]}`；`plan` ＝ `{active, pending}`。
+### 建议修改（8 条）
+S1 T9 改号 **T-CLI**（roadmap #9 是第三批的定时提醒，避免撞号）｜S2 §0 与 roadmap「8 延后」对齐（已改）｜S3 catalog 的 `mode` 兜底用 `"unknown"`（合法值含它）｜**S4 登记待查**：`queue` 帧在 0.2.0 已消失（`remote.ts:355` 分支永不触发 ⇒ 队列条同样静默失效），可能应改由 `inbox` 投影驱动——**不在本批范围，但必须记录**｜S5 `design.md §3.3/§3.4` 补新端点与"子会话必须用子代理地址"这条知识｜S6 §4 smoke 行措辞（smoke 自身含自清理写路径）｜S7 手测若用真实状态变更，须在一次性会话做并 `goals/clear` + 跑 `session-purge.mjs` 收尾｜S8 `esbuild.mjs:44` 的日志文案过期（写入 v2 顺手修）。
 
-**F3 现有代码锚点**
+---
 
-1. `src/session/manager.ts:739 listSubagents()` → `subagent.list`（v012 映射 `subagents/list`，已移除）→ 空列表 + 一次告警；`client.ts:237-241` 是降级点。
-2. `manager.ts:753 subagentHistory(childId)` → `session.history`（**可用**，子代理就是一个 session）；`manager.ts:764 subagentPrompt(childId)` → `session.prompt` 指向 child（既有工作路径）；`manager.ts:780 subagentInterrupt(childId)` → `session.cancel` 指向 child。
-3. `manager.ts:991` 处理 `type === "session/jobs" || "jobs"` 的 mux 负载并 post `{t:"jobs"}` —— **v012 上没有产生这种负载的流**（`remote.ts` 无对应订阅）⇒ 0.2.0 上后台任务面板极可能恒空（T7 第一步实测确认）。
-4. `webview/src/protocol.ts` 已有 `subagent-prompt` / `subagent-interrupt` / `list-subagents` / `subagent-history` 消息（Phase 2 已铺），`app.tsx` 的 `drawer === "subs"` 抽屉与 `subView` 转录 Sheet 已存在；`{t:"jobs"}` 已有渲染（`drawer === "jobs"`，`app.tsx:860` 附近）。
-5. GoalBar 在 `app.tsx:1948` 附近，只读渲染 `goal` 投影。
+## 1. 事实基础（v2：只留已证实项）
 
-**F4 环境**：本机旧 CLI（`C:\Users\wurui\dsh`，0.1.5-rc.1）**已被用户删除**（2026-09-30）⇒ 插件状态栏的"旧实例"候选探测不到；`args:audit` 现在只覆盖桌面版 asar；`docs/design.md` §3.5 与 `AGENTS.md` 连接路线仍以"两套共存"为前提。
+**F1 子代理链路（0.2.0）**
+
+1. `subagents/list` **已移除** ⇒ `client.ts:237` 返回 `{entries: []}`，抽屉恒空。
+2. **转录**：`session/page`/`session/follow` 的 `address` 是 union：`{kind:"session",sessionId}` 或 `{kind:"subagent",parentSessionId,childSessionId,mode:"one-shot"|"continuable"|"unknown"}`；对 `origin==="subagent"` 的会话，**session 地址必被拒**（实测错误串：`session/agent-busy: subagent Sessions require their durable parent address`），子代理地址通过。一份子代理的 `mode` 从父会话投影 `subagentCatalog[]` 取。
+3. **追问**：`subagents/prompt` request ＝ `{requestId, parentSessionId, childSessionId, mode:"continuable", delivery:"queue"|"steer", content:[{type:"text",text}], clientTimeZone?}`，回执 `{messageId}`。
+4. **打断**：`subagents/interruptByParent` args ＝ 平铺 `{childSessionId, parentSessionId, mode}`，`mode` schema 是 `literal("continuable")`（**唯一合法值**），回执 `{accepted:true}`。
+5. **列表权威源**：`session/list` 行含 `origin`/`parentSessionId`/`agentAvailable`/`running`/`projections.values.title`（本机 98 行中 71 行为子代理行，分属 8 个父会话）；父会话 `session/projections` 的 `subagentCatalog` ＝ `[{id, mode, label, createdAt}]`，与行的 id 一致但 **label ≠ 行的 title**（catalog 是任务名，行 title 是提示词开头）⇒ 双源必要。
+
+**F2 Goal（0.2.0）**
+
+- `goal` 投影值 ＝ `{goal:{id, revision, objective, phase:"active"|"paused"|"blocked"|"complete", blockedReason?, maxGoalRounds}, roundsStarted, createdAt, updatedAt} | null`（GoalBar 读 `data?.goal`）。
+- `goals/create {agentId, request:{objective, maxGoalRounds?}}`；`goals/edit {agentId, ref:{id,revision}, request:{objective?, maxGoalRounds?}}`；`goals/pause|resume|complete|clear {agentId, ref:{id,revision}}`；`goals/get {agentId}`（无目标 → `ok` 且无 value）。
+
+**F3 后台任务（0.2.0）**
+
+- `job/list`、`job/follow` 都是 **stream** 端点（一元直调 → `gateway/signature-invalid: stream Remote methods must be opened through the stream carrier`）。
+- `job/list` request ＝ `{sessionId}`（单字段）；帧 ＝ `{type:"rows", jobs:[{id, kind, label, status, startedAt, finishedAt?, output:{total, earliest, spillPaths?}}]}`（**全量帧，无增量**）。
+- `job/kill` ＝ `{request:{jobId, sessionId?}}`。
+- **现状证死**：`remote.ts` 只开 4 条流（`session/follow`、`session/control`、`workspace/follow`、`$events`），无 `job/list`；`SessionControlFrame` 只有 `baseline`（value 仅含 projections）与 `projection` 两种，**不含 queue/jobs** ⇒ `manager.ts:991` 的分支与 `app.tsx:1048-1079` 的渲染在 0.2.0 上永不进数据。
+
+**F4 计划评审 / 提问（0.2.0）**
+
+- 应答载体 `$events/result` 可用（实测 HTTP 200 受理）；`userQuestions/answer` ＝ 平铺 `{agentId, callId, answer:{answers:[{id, selected:[…], custom?}]}}`；`userQuestions/attachWait` ＝ `{agentId, callId}`。
+- 权威状态在投影：`userQuestions` ＝ `{active:[…], settled:[…]}`；计划评审的提问带 `intent.kind === "plan-review"`（`protocol.ts` 的 `QuestionCard` 已在建模）。
+
+**F5 环境**：旧 CLI `C:\Users\wurui\dsh` 已被用户删除（2026-09-30）；`design.md §3.5` 与 `AGENTS.md` 仍以"两套共存"为前提；`args:audit` 现在只覆盖桌面版 asar。
 
 ---
 
@@ -59,26 +84,25 @@
 
 | 文件 | 改动 |
 |---|---|
-| `webview/src/protocol.ts` | 新消息：`subagents`（改用新条目形状，替换现有 `{kind,id,mode,…}`）、`goal-result`（操作回执/错误）、`jobs` 增加 `spillPaths` |
-| `src/session/manager.ts` | `listSubagents()` 改用 `session/list` + 投影；`subagentInterrupt()` 改用 `subagents/interruptByParent`；新增 `goalAction()`；新增 `followJobs()`（打开 `job/list` 流）与 `killJob()` |
-| `src/connection/remote.ts` | 新增 `job/list` 流的打开/转发（会话切换时重开） |
-| `webview/src/app.tsx` | 子代理抽屉渲染新条目（mode/label/running/`agentAvailable`）；GoalBar 加四个操作按钮 + 建目标入口；任务面板显示 `spillPaths` 可点；新增「编队」抽屉（`agentTeam`） |
-| `webview/src/styles.css` | 上述新增按钮/徽标样式 |
-| `docs/design.md` | 新增 §3.7（子代理 / Goal / 任务流 / 编队投影契约）；§3.5 补"旧 CLI 已移除"注记 |
-| `AGENTS.md` / `docs/roadmap.md` / `CHANGELOG.md` | 连接路线注记、第二批状态、v0.19.3 记录 |
-| `scripts/*` | 视 T5-T7 结论补回归用例（至少：GoelBar 操作的 ref 组装、job 流的帧解析） |
+| `src/connection/client.ts` | `v012History` 增**子代理地址**分支（`parentSessionId`+`subagentMode` 存在时用 `{kind:"subagent",…}`）；新增 `subagents.prompt` / `subagents.interruptByParent` / `goals.*` / `job.kill` 的方法映射（落在 client 内以便被 `args:audit` 计入） |
+| `src/connection/remote.ts` | `snapshotOnce` / `openFollow` 的地址参数化（接受字符串或 `{sessionId,parentSessionId,mode}`）；新增 `desiredJobs` + `openJobList(sessionId)` + `jobsHandle`，在 `openPersistentStreams()` 与 `follow()` 里 cancel/重开（镜像 `desiredFollow`） |
+| `src/session/manager.ts` | `listSubagents()` 双源重写；`subagentHistory()` 传父会话与 mode；`subagentPrompt()` 改走 `subagents.prompt`；`subagentInterrupt()` 改走 `interruptByParent`（legacy flavor 才回退 `session.*`-on-child）；新增 `goalAction()` / `createGoal()` / `killJob()`；`follow()` 处触发 job 流 |
+| **`src/extension.ts`** | **入站分发补 3 个 case**（`goal-action` / `goal-create` / `job-kill`）；T-CLI 的提示文案调整（148/150/164/182/189） |
+| `webview/src/protocol.ts` | 入站成员 +3；`subagents` 条目类型对齐（`activity:"active"｜"idle"`，`mode`，`label`）；`jobs` 条目加 `spillPaths?`；新 `goal-result` |
+| `webview/src/app.tsx` | 子代理抽屉渲染对齐（`"active"`、mode 徽标）；GoalBar 三态按钮 + 建目标；任务面板 `spillPaths` 可点 + 终止按钮 |
+| `webview/src/styles.css` | 新增按钮/徽标样式 |
+| `docs/design.md` | 新增 §3.7（子代理地址与 `subagents/*` 契约 / job 流 / goal 操作）；§3.3 补端点；§3.4 补"子会话必须用子代理地址"；§3.5 注记旧 CLI 已移除 |
+| `AGENTS.md` / `docs/roadmap.md` / `CHANGELOG.md` / `esbuild.mjs` | 连接路线注记、第二批状态（S1/S2）、v0.19.3 记录、过期日志文案（S8） |
 
 ---
 
 ## 3. 任务
 
-### T4 子代理面板真修复（中）
+### T4 子代理链路真修复（中）
 
-**文件**：`src/session/manager.ts`、`webview/src/protocol.ts`、`webview/src/app.tsx`
+**文件**：`src/connection/client.ts`、`src/connection/remote.ts`、`src/session/manager.ts`、`webview/src/{protocol.ts,app.tsx}`
 
-- 步骤 1：`listSubagents(sessionId)` 改为**双源**：
-  - 主源：`call("session.list", {})` 的行里 `origin === "subagent" && parentSessionId === sessionId`，取 `{sessionId, running, agentAvailable, projections.values.title}`；
-  - 富源：父会话 `call("session.projections", {request:{sessionId}})` 的 `subagentCatalog`（`{id, mode, label, createdAt}`），按 `id` 与主源合并（`label` 优先取 catalog）。
+- 步骤 1（列表，双源）：
   ```ts
   async listSubagents(sessionId: string): Promise<void> {
     try {
@@ -93,146 +117,149 @@
         .filter((r) => r.parentSessionId === sessionId)
         .map((r) => ({
           id: r.sessionId,
-          mode: catalog.get(r.sessionId)?.mode ?? "continuable",
-          label: r.projections?.["values"]?.["title"] ?? catalog.get(r.sessionId)?.label ?? r.sessionId.slice(0, 8),
-          activity: r.running ? "running" : "idle",
+          mode: catalog.get(r.sessionId)?.mode ?? "unknown",   // S3：合法值含 unknown
+          label: catalog.get(r.sessionId)?.label ?? titleOf(r) ?? r.sessionId.slice(0, 8), // catalog 是任务名，行 title 是提示词
+          activity: r.running ? "active" : "idle",             // M3：渲染端判 "active"
           hasChildren: false,
-        }));
+        }))
+        .sort((a, b) => Number(b.activity === "active") - Number(a.activity === "active"));
       this.host.post({ t: "subagents", sessionId, entries });
-    } catch (err) { /* 告警 + 空列表，保持既有降级形态 */ }
+    } catch (err) {
+      // 用户可见降级（不是空注释）
+      this.host.post({ t: "notify", kind: "warn", message: `子代理列表获取失败：${errText(err)}` });
+      this.host.post({ t: "subagents", sessionId, entries: [] });
+    }
   }
   ```
-- 步骤 2：`subagentInterrupt(childId)` → 先试新端点、失败回退旧路径：
+  另存 `private subagentModes = new Map<string, string>()`（childId → mode），供转录/追问复用。
+- 步骤 2（转录，**子代理地址**）：`client.ts` 的 `v012History` 增分支：
   ```ts
-  await this.lifecycle.client.call("subagents.interruptByParent", {
-    childSessionId: childId, parentSessionId: this.currentSession, mode: "continuable",
+  const address = payload.parentSessionId
+    ? { kind: "subagent", parentSessionId: payload.parentSessionId, childSessionId: payload.sessionId, mode: payload.subagentMode ?? "unknown" }
+    : { kind: "session", sessionId: payload.sessionId };
+  ```
+  `remote.ts` 的 `snapshotOnce`/`openFollow` 同步接受该地址（不再硬编码 `kind:"session"`）；`manager.subagentHistory(childId)` 从 `subagentModes` 取父会话与 mode 一起传。
+- 步骤 3（追问，一级路径）：
+  ```ts
+  await this.lifecycle.client.call("subagents.prompt", {
+    request: { requestId: makeRequestId("subprompt"), parentSessionId: this.currentSession, childSessionId: childId,
+      mode: "continuable", delivery: "queue", content: [{ type: "text", text }] },
   });
   ```
-  （`mode` 只能是 `"continuable"`，F1-1；`parentSessionId` 用当前会话。失败 → 回退 `session.cancel{childId}` 并记录一次日志，不静默。）
-- 步骤 3：`subagentPrompt` 保持 `session.prompt`-on-child（**已是工作路径**），但在注释里记录替代路径与确认步骤：
-  > 若将来 child 不可 prompt 或需要正式的父子语义，改用 `subagents/prompt {request}`；其 request 内层字段需先从 asar 确认：`node_modules/@deepseek-ai/dsh-subagent/lib/*.js` 中搜 `SubagentPromptRequest` 的 `z.object({...})` 定义（本方案未取到，故不在本批切换）。
-- 步骤 4：webview 抽屉渲染新条目（mode 徽标 `continuable`/`one-shot`、运行点、label），空态文案改为「该会话暂无子代理」。
+  仅 `flavor === "legacy"` 时回退 `session.prompt`-on-child。
+- 步骤 4（打断）：`subagents.interruptByParent {childSessionId, parentSessionId: this.currentSession, mode: "continuable"}`；legacy 回退 `session.cancel`。**`mode` 写成常量并注明来源**（schema `literal("continuable")`）。
+- 步骤 5：webview 抽屉渲染对齐（`activity === "active"` 才显示打断按钮；mode 徽标）。
 
-**验收**：本机实测——打开一个真实有子代理的会话（如 `session-246fce77…`，实测 70 个子代理行中多属它）的抽屉，**能看到条目且非空**；点一个 continuable 子代理 → 转录非空；`subagentInterrupt` 用真实子代理触发→ 收到成功或明确的错误提示（不允许静默）。
+**验收**：真机——打开父会话抽屉见条目（本机可用 `session-246fce77…`，6 个子代理）；点 continuable 子代理**转录能出来**（关键：修好前必报 `session/agent-busy`）；追问有回执与转录更新；打断一个运行中的子代理 → 成功或明确错误，**不允许静默**；`pnpm compile` 通过。
 
 ### T5 计划评审链路验证（低）
 
-**文件**：`src/session/manager.ts`（必要时）、`docs/design.md`
-
-- 步骤 1：**先验证**：在 0.2.0 上触发一次计划模式（或在 `plan` 投影 `{active:true}` 的会话里），确认插件的提问卡能完整显示「计划评审」并在应答后解除。判据：`question/requested` 帧到达 + 应答后 `question/resolved`。
-- 步骤 2：若 `respond()`（`$events/result` 载体，实测通路可用）能完成应答 → **本项无需改码**，只把结论写进 `design.md §3.7`。
-- 步骤 3：若应答不生效（计划卡不解除），改走 `userQuestions/answer` 平铺端点：`{agentId: sessionId, callId: rpcId, answer:{answers:[{id, selected, custom?}]}}`（形状 F1-6 实测）。
-- 步骤 4：验收记录（成功路径 + 使用端点）写入 CHANGELOG。
-
-**验收**：一次真实的计划评审在插件里走完（或明确记录"0.2.0 上计划评审未复现，留待用户手测"——不允许含糊）。
+- 步骤 1：在 0.2.0 上触发一次计划模式提问（或在 `plan` 投影 `active:true` 的会话里复用），**三条同时成立**才算通过：
+  1. `respondQuestion()` 的 `$events/result` 回执 `accepted === true`（非"无 value 视为成功"的宽松判定）；
+  2. 该会话 `session/projections` 的 `userQuestions.active` 中该 `callId` 消失、对应项 `state → "continued"`；
+  3. 随后一个回合**恢复产出**（新 `assistant/message`）。
+- 步骤 2：若三条不全成立 → 改用 `userQuestions/answer {agentId, callId, answer:{answers:[{id, selected, custom?}]}}` 并重跑三条判据。
+- 步骤 3：结论（成功路径 + 所用端点 + 原始证据片段）写入 CHANGELOG；**不允许**写"未复现"就收工——若无法在 0.2.0 上复现计划评审场景，必须明确写出"未复现的原因 + 留给用户手测的具体步骤"。
 
 ### T6 Goal 控制（低）
 
-**文件**：`src/session/manager.ts`、`webview/src/protocol.ts`、`webview/src/app.tsx`
-
-- 步骤 1：宿主新增：
+- 步骤 1：宿主（`manager.ts`）+ 入站分发（`extension.ts`）：
   ```ts
   async goalAction(action: "pause" | "resume" | "complete" | "clear", ref: { id: string; revision: number }): Promise<void> {
-    const method = `goals.${action}`;
     try {
-      await this.lifecycle.client.call(method, { agentId: this.currentSession, ref });
+      await this.lifecycle.client.call(`goals.${action}`, { agentId: this.currentSession, ref });
       this.host.post({ t: "goal-result", ok: true, action });
-    } catch (err) { this.host.post({ t: "goal-result", ok: false, action, error: errText(err) }); }
+    } catch (err) {
+      this.host.post({ t: "goal-result", ok: false, action, error: errText(err) });
+    }
   }
-  async createGoal(objective: string, maxGoalRounds?: number): Promise<void> {
-    await this.lifecycle.client.call("goals.create", { agentId: this.currentSession, request: { objective, ...(maxGoalRounds ? { maxGoalRounds } : {}) } });
+  async createGoal(objective: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("goals.create", { agentId: this.currentSession, request: { objective } });
+      this.host.post({ t: "goal-result", ok: true, action: "create" });
+    } catch (err) {
+      this.host.post({ t: "goal-result", ok: false, action: "create", error: errText(err) });
+    }
   }
   ```
-- 步骤 2：**`ref` 从 `goal` 投影取**（投影含 `id`/`revision`；`app.tsx` 已持有 `goalData`）⇒ webview 直接 `post({t:"goal-action", action, ref:{id, revision}})`。
-- 步骤 3：GoalBar 右侧加「暂停/继续」（按 `phase` 二选一显示）、「完成」、「清空」（二次确认）、以及无目标时的「建目标」（输入 objective → `goal-create`）。
-- 步骤 4：回执处理：`ok:false` → 通知条；`ok:true` → 等投影刷新（投影是权威，不做乐观本地状态）。
+- 步骤 2（**ref 层级，M5**）：webview 从 `goalData?.goal` 取 `{id, revision}`：`post({t:"goal-action", action, ref:{id:g.id, revision:g.revision}})`。
+- 步骤 3：GoalBar 三态——**有 goal**：显「暂停」（`phase==="active"`）或「继续」（`phase==="paused"`）、「完成」、「清空」（二次确认，`phase!=="complete"`）；**goal 为 null**：显「建目标」（输入 objective）。`blocked` 相位只显示 blockedReason（操作按钮仅留「清空」）。
+- 步骤 4：回执→通知条；成功不写本地乐观态（等 `goal` 投影刷新为权威）。
 
-**验收**：真机——建目标 → GoalBar 出现；暂停 → 徽标变 paused；继续 → 恢复；完成/清空 → 消失；`revision` 不匹配时提示（服务端会拒）。
+**验收**：真机（**在一次性会话里做**，收尾 `goals/clear` + purge）——建目标→GoalBar 出现；暂停→徽标 paused；继续→恢复；完成/清空→消失；对 `goal=null` 会话点操作不会出现（按钮不渲染）；`revision` 过期时服务端拒绝并出提示。
 
-### T7 后台任务面板（中）
+### T7 后台任务面板真修复（中）
 
-**文件**：`src/connection/remote.ts`、`src/session/manager.ts`、`webview/src/protocol.ts`、`webview/src/app.tsx`
+- 步骤 1（`remote.ts`，镜像 `desiredFollow`）：
+  ```ts
+  private desiredJobs: string | undefined;
+  private jobsHandle: StreamHandle | undefined;
+  follow(sessionId) { ...; this.desiredJobs = sessionId; this.openJobList(sessionId); }
+  private openJobList(sessionId: string): void {
+    this.jobsHandle?.cancel();
+    this.jobsHandle = this.openStream("job/list", { request: { sessionId } }, {
+      onItem: (value) => {
+        const f = value as { type?: string; jobs?: unknown[] };
+        if (f?.type !== "rows") { warn(`[v012] job/list unexpected frame: ${String(f?.type)}`); return; }  // 铁律#2：记一次，不抛
+        this.opts.onMux({ rpcId: "", payload: { type: "session/jobs", sessionId, jobs: Array.isArray(f.jobs) ? f.jobs : [] } });
+      },
+      onError: () => warn(`[v012] job/list error for ${sessionId}`),
+    });
+  }
+  ```
+  `openPersistentStreams()` 里加 `this.jobsHandle?.cancel(); if (this.desiredJobs) this.openJobList(this.desiredJobs);`。
+- 步骤 2：`job/kill`（`{request:{jobId}}`）→ 面板每行「终止」+ 二次确认；成功/失败都出通知。
+- 步骤 3：作业项 `output.spillPaths` 渲染为可点文件（复用第一批 `open-file` 语义），并显示 `output.total`。
+- 步骤 4：空态文案改为「当前会话没有后台任务」；未知帧类型只记日志（不打断面板）。
 
-- 步骤 0（**先实测**）：确认 0.2.0 上任务面板是否真的空（打开 `drawer === "jobs"`；同时查 `session/control` 帧里是否带 jobs）。若已有数据流 → 本项降为"补 spillPaths 展示"。
-- 步骤 1：`job/list` 是流式端点（F1-5）⇒ 在 `remote.ts` 增加与 `session/control` 同构的订阅：会话切换时 `openStream("job/list", { request: { sessionId } })`（**request 内层字段需按 F1-5 同法先从 asar 的 `job_list_parameter_0$schema` 确认**；`job/follow` 的已知形状是 `{sessionId?, jobId, from?}`），把 baseline/增量帧转成 manager 的 `{t:"jobs"}`。
-- 步骤 2：帧解析要宽松（铁律#2）：未知帧类型记一次日志、不抛出。
-- 步骤 3：`job/kill`（`{request:{jobId}}`）接到面板上（每行一个「终止」按钮，二次确认）。
-- 步骤 4：作业项 `output.spillPaths`（大输出落盘路径）渲染为可点文件（复用第一批的 `open-file` 语义）。
+**验收**：真机——让 agent 起一个后台任务 → 面板出现且状态变化；终态后更新；「终止」生效；有 spill 的作业路径可点；**修好前该面板恒空**（对照证据：`remote.ts` 无 job 流）。
 
-**验收**：真机——让 agent 起一个后台任务 → 面板出现该任务与状态；终态后状态更新；终止按钮生效；有 spill 的作业其路径可点开。
+### T-CLI 旧 CLI 删除后的收尾（低，原 T9）
 
-### T8 Agent Teams 编队抽屉（中高，视兴趣）
+- 步骤 1：文案白名单逐处确认（M9 实测清单）：`extension.ts:148`（`启动本地 dsh web（旧版）` 按钮）、`:150`（提示串）、`:164`、`:182`、`:189`、`lifecycle.ts:253-255`、`design.md:128/148`、`package.json:102/107`、`README.md:29-31`。**做法**：仅当 `locateDsh()` 能解析出 CLI 时才提供"启动旧版"入口；解析不到就只给「打开桌面版」/「选择实例…」，并在提示里说明"本机未检测到旧版 CLI（已删除可忽略）"。
+- 步骤 2：**不删代码**：`instances.ts` 的 3080 候选、`autoStart`、`lifecycle.startDsh` 全部保留（重装旧 CLI 即自动恢复）。
+- 步骤 3：`design.md §3.5` 与 `AGENTS.md` 连接路线加注：「2026-09-30 用户已删除旧 CLI ⇒ 本机只剩桌面版；候选/兜底代码保留」。
+- 步骤 4（S8）：修 `esbuild.mjs:44` 过期日志文案（`extension.js` → `extension.cjs`）。
 
-- 步骤 1：父会话 `session/projections` 的 `agentTeam`（F2）→ 新抽屉「编队」：成员表（`name` / `role` / `phase`）+ 任务列表（`tasks`）。
-- 步骤 2：只读展示；`members[].id` 是 sessionId ⇒ 点击可 `switch`（复用既有消息）。
-- 步骤 3：空态：「当前会话没有编队（Agent Teams 未启用或本会话未建队）」。
-
-**验收**：真机——在一个有编队的会话（如本机 lead-only 的会话）里打开抽屉，至少显示 lead 成员；点击成员可切到该会话。
-
-### T9 旧 CLI 删除后的收尾（低）
-
-- 步骤 1：`docs/design.md §3.5` 与 `AGENTS.md` 连接路线加注："2026-09-30 用户已删除旧 CLI（`C:\Users\wurui\dsh`）⇒ 本机只剩桌面版实例；3080 候选与 `autoStart` 保留但当前无对象，重装旧 CLI 后自动恢复可用"。
-- 步骤 2：提示文案复核：两处都不通时只提示「打开桌面版 App」，不再提"一键拉起旧版"（若该分支仍会尝试拉起不存在的 CLI，改为明确失败提示，不静默）。
-- 步骤 3：**不删代码**（`instances.ts` 候选表、`autoStart` 分支保留）。
-
-**验收**：`pnpm compile`；文案检索（`dsh-vscode` 输出里不再出现"一键拉起旧版"这类已失效承诺）；`pnpm regress:all` 全绿。
+**验收**：逐处确认无失效承诺（检索**源码 + 文档**，排除 CHANGELOG 历史留痕）；`pnpm compile`；`pnpm regress:all` 全绿；真机点一次"没有实例"路径，提示里不再出现需要旧 CLI 的动作。
 
 ---
 
-## 4. 验证与回归（逐条给结果）
+## 4. 验证与回归（期望值为实测口径）
 
 | 命令 | 期望 |
 |---|---|
 | `pnpm compile` / `pnpm build` | exit 0；产物 `dist/extension.cjs` + `dist/webview.js` |
-| `pnpm regress:all` | fold 24/24、fence 8/8、pathlink 8/8、locate ≥25/25（环境 skip 允许）、model 23/23、repair 14/14 |
-| `pnpm args:audit`（桌面版 asar） | **0 处不匹配**；新增端点（`subagents/interruptByParent`、`goals/*`、`job/kill`）纳入覆盖点（预计 29 → 33+，以脚本实测为准） |
-| `pnpm smoke --base-url http://127.0.0.1:19387 --from-credentials` | 14/14 保持；**不新增写端点探针**（避免真实状态变更），新增读取断言仅限 `session/projections` 键存在性 |
-| 手测（用户，装 vsix 后 Reload Window） | T4 抽屉非空 + 转录 + 中断；T5 计划评审（或记录未复现）；T6 建/暂停/继续/完成/清空；T7 任务出现/终止/spill 可点；T8 编队成员可见 |
+| `pnpm regress:all` | fold 24/24、fence 8/8、pathlink 8/8、locate ≥25/25（环境 skip 允许）、model 23/23、repair 14/14（**全部不得回退**） |
+| `pnpm args:audit`（桌面版 asar） | **0 处不匹配**；覆盖点 **29 → 30**（新增 `job/list` 流开帧；其余端点若按 §2 落在 `client.ts` 则再 +N，**以脚本实跑数字为准**，不预先写死 33+） |
+| `pnpm smoke --base-url http://127.0.0.1:19387 --from-credentials` | 14/14 保持；新增断言仅限**只读**（`session/projections` 含 `subagentCatalog` / `agentTeam` 键；`job/list` 作为流能开且收到 `{type:"rows"}`）。**不新增写端点探针** |
+| 手测（用户，装 vsix 后 Reload Window） | T4：抽屉非空 + **转录能出** + 追问 + 打断；T5：计划评审（或按 §T5 步骤 3 的具体步骤）；T6：建/暂停/继续/完成/清空（一次性会话 + `goals/clear` + purge）；T7：任务出现/终止/spill 可点；T-CLI：无实例时的提示不含失效动作 |
 
 ---
 
-## 5. 风险与回退
+## 5. 风险与登记项
 
-| 编号 | 风险 | 处置 |
+| 编号 | 风险/登记 | 处置 |
 |---|---|---|
-| R1 | `job/list` 请求内层字段未取到（只有 `job/follow` 的已知） | T7 步骤 1 先按同法从 asar 确认；字段不符则**先只做 spillPaths + 空态文案**，不硬编码猜测 |
-| R2 | `subagents/prompt` 内层字段未取到 | 不切换（继续用 `session.prompt`-on-child），代码注释记录确认方法 |
-| R3 | `subagents/interruptByParent` 只接受 `mode:"continuable"` | 常量写死并注释来源；失败回退 `session.cancel` |
-| R4 | 子代理行数很大（本机 70 行，其中多为历史子代理） | 抽屉只列**当前会话的子代理**；列表来源已是内存里的 `session/list`，无额外往返 |
-| R5 | Goal 操作与桌面版并发（同一 `~/.dsh`） | 全部以 `goal` 投影刷新为权威，不做乐观本地态；`ref.revision` 不匹配即报错 |
-| R6 | 计划评审在 0.2.0 上的真实链路未复现 | T5 允许"记录未复现 + 留手测"，但**不允许**在未验证的情况下改应答路径 |
-| R7 | 编队抽屉误读 `agentTeam` 为空对象 | 明确判空：`members` 非数组或为空 → 空态文案 |
-| 回退 | 单项出问题 | 每任务一个 commit，`git revert <commit>`；无 schema/数据迁移、无系统配置改动 |
+| R1 | 子代理地址的 `mode` 若与真实不符（`one-shot`/`continuable`/`unknown` 三选一） | 从 `subagentCatalog` 取；取不到用 `"unknown"`（合法值）；转录失败时**回退提示**而不是静默 |
+| R2 | `subagents.prompt` 对非 continuable 子代理会拒 | 只对 `mode === "continuable"` 显示追问入口；`one-shot` 只读转录 |
+| R3 | job 流随会话切换的 cancel/重开漏掉 → 串台 | 镜像 `desiredFollow`；切换即 `cancel` + 重开；`onItem` 不校验 sessionId 就转发视为缺陷 |
+| R4 | 手测写真实状态（goal、kill） | 一次性会话 + `goals/clear` + `session-purge.mjs`（S7） |
+| R5 | `queue` 帧在 0.2.0 已消失（`remote.ts:355` 永不触发）⇒ **队列条同样静默失效** | **本批不改**，作为登记项写入 `design.md §3.7` 与 roadmap（下一步候选：由 `inbox` 投影驱动） |
+| 回退 | 单项出问题 | 每任务一个 commit，`git revert`；无 schema/数据迁移、无系统配置改动 |
 
 ---
 
 ## 6. 文档与残留
 
-- **文档先改**：`docs/design.md` 新增 §3.7（子代理双源 / Goal 操作与 ref / `job/list` 流式契约 / `agentTeam` 投影）+ §3.5 注记；`docs/roadmap.md` 第二批状态；`AGENTS.md` 连接路线注记与命令块（如需）；`CHANGELOG.md` v0.19.3。
-- **残留**：本方案编写期的只读探针（`%TEMP%\dsh-batch2-*.mjs`）**已全部删除**；实施期新探针与测试会话收尾自清理（冒烟脚本已内建）。
-- **不 push**；装 vsix 属系统配置变更（沿用既有授权，装前一句确认）。
+- **文档先改**：`design.md` §3.3/§3.4/§3.5/§3.7（S5）、`roadmap.md`（第二批状态 + 队列条登记）、`AGENTS.md`（连接路线注记）、`CHANGELOG.md`（v0.19.3）。
+- **残留**：本方案编写期与复核期的只读探针（`%TEMP%\dsh-b2-*.mjs`、`dsh-batch2-*.mjs`）**已全部删除**；实施期新探针与一次性会话收尾自清理。
+- **不 push**；装 vsix 属系统配置变更（沿用授权，装前一句确认）。
 
 ---
 
-## 7. 与第一批的关系
+## 7. 与第一批的关系与增量复核要求
 
-- 第一批已交付 v0.19.2（跨会话搜索 / 置顶归档含归档状态修复 / 交付物），其 `open-file`、`search-sessions`、`caps` 消息与本次 T7 的 spillPaths、T4 的抽屉共用同一套消息与语义。
-- 本批**不修改**第一批任何已验收行为；子代理抽屉的消息形状变化只影响 `drawer === "subs"` 一处渲染。
-
----
-
-## 8. 审查标准（给独立审查子代理）
-
-**独立性要求**：只接收本文件；自行 read 代码 / 查 asar / 跑**只读**探针；**禁止**改文件、禁止写端点（`goals/*` 的写方法、`subagents/prompt|interruptByParent`、`job/kill` 一律不得调用）、禁止建会话、禁止 push、不得派生子代理。结论必须带可核查证据（文件:行号、命令、返回片段）。
-
-**必查 7 项**：
-
-1. **事实正确性**：§1 的 F1-F4 每条是否成立？行号漂移＝FAIL（给正确锚点）。特别核对 `subagents/list` 移除后的降级点、`manager.ts:991` 的 jobs 负载来源、`goal` 投影是否真的含 `id`/`revision`。
-2. **协议契约**：`subagents/interruptByParent` 的 `mode` 常量、`goals/*` 的 `ref` 形状、`job/list` 为流式端点这三点是否与 asar 一致？T7 处理"流式 vs 一元"的方式是否与 `remote.ts` 既有 `session/control` 订阅同构？
-3. **"是否真的坏了"的判定**：T4/T7 的"当前恒空/恒无数据"结论是否被证实（读码 + 只读观测）？有没有可能它们其实通过别的路径在工作（例如 `session/control` 帧里就带 jobs）？**这一项是本次审查的重点。**
-4. **最简路径**：T4 的双源合并、T6 的按钮组、T8 的抽屉是否是最简实现？有没有既有消息/组件可直接复用（避免重复造）？
-5. **可测性与验收**：§4 每条期望能否判真假？哪些验收是不可执行的口号？T5 的"允许记录未复现"会不会变成逃避验证的借口——给出更硬的判据。
-6. **边界与遗漏**：至少检查——会话切换时 job 流是否重开/取消；子代理抽屉在无 `session/list` 权限/失败时的降级；Goal 操作在无目标时的按钮态；`agentTeam` 在非编队会话的空态；T9 文案是否真的还有"拉起旧 CLI"的失效承诺。
-7. **红线与残留**：是否触碰系统配置/删除/push？本批**不得**调用任何写端点做验证（与第一批不同，批 2 的写端点会改变你的真实状态）——审查是否守住了这条？
-
-**输出格式**：`维度 | PASS/FAIL | 证据 | 修改建议`；末尾给「必须修改（阻塞执行）」与「建议修改（可延后）」两张清单 + 一句话结论。
+- 第一批已交付 v0.19.2（`open-file`、`search-sessions`、`caps` 语义、baseline 三字段）。本批复用其 `open-file`，**不修改**其任何已验收行为。
+- 本批 v1 → v2 的修订点：T4（地址 + `subagents/*` + activity 值）、T5（判据）、T6（ref 层级 + 守卫）、T7（帧型 + 钩子）、T-CLI（白名单）、§2（`extension.ts`）、§4（覆盖点 30）。
+- **审查者要求"按 M1–M10 修订后增量复核"**；我已对 M1/M2/M3/M4/M5 做了**独立实测复核**（证据在 §0.5 与 §1）。增量复核范围建议＝**修订点（上列 7 处）+ 上轮 FAIL 项**，不再全量重审。
