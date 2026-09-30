@@ -104,6 +104,8 @@ export function App() {
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [capOpen, setCapOpen] = useState(false);
   const [killConfirm, setKillConfirm] = useState<string | null>(null);
   /** 需求三第三批：当前会话的 active 提醒（schedule/list 裸数组；无 nextRunAt）。 */
   const [schedules, setSchedules] = useState<
@@ -642,8 +644,34 @@ export function App() {
           >
             <Icon name="edit" size={12} />
           </button>
+          {/* 状态胶囊：goal / 待发 / 上下文合成一条，点击用浮层展开（不挤压画布） */}
+          <button
+            className={`capsule${capOpen ? " is-on" : ""}`}
+            title="会话状态：目标 / 待发消息 / 上下文占用（点击展开）"
+            onClick={() => setCapOpen((v) => !v)}
+          >
+            {goalData?.goal ? <span className="cap-goal">◎ 目标</span> : <span className="cap-goal">◎ 设目标</span>}
+            {queue.length > 0 && <span className="cap-pending">{queue.length} 待发</span>}
+            {ctxPct !== undefined && <span className="cap-ctx">{Math.round(ctxPct * 100)}% 上下文</span>}
+          </button>
+          <span className="spacer" />
+          <button
+            className={`icon-btn${drawer === "search" ? " is-on" : ""}`}
+            title="搜索会话（跨工作区）"
+            onClick={() => setDrawer((d) => (d === "search" ? "" : "search"))}
+          >
+            <Icon name="slash" size={13} />
+          </button>
+          <button
+            className={`icon-btn${menuOpen ? " is-on" : ""}`}
+            title="更多：工作区 / 任务 / 子代理 / 轨迹 / 提醒 / 产出 / 设置"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <span className="dots">⋯</span>
+          </button>
         </div>
-        <div className="header-row header-tool-row">
+        {menuOpen && (
+        <div className="header-row header-tool-row header-menu">
           <PresetPicker
             presets={presetData}
             current={current}
@@ -725,10 +753,36 @@ export function App() {
             <Icon name="plus" size={13} />
           </button>
         </div>
+        )}
       </div>
 
-      {/* goal dock bar — active-session goal projection (GUI GoalBar look) */}
-      <GoalBar data={goalData} />
+      {/* 状态胶囊浮层：goal 操作（含"设目标"）+ 待发明细 + 轮次/上下文 */}
+      {capOpen && (
+        <div className="cap-pop" onMouseLeave={() => setCapOpen(false)}>
+          <GoalBar data={goalData} />
+          {queue.length > 0 && (
+            <div className="cap-pop-row">
+              <span className="cap-pop-k">待发 {queue.length} 条</span>
+              <button
+                className="link-btn"
+                onClick={() => {
+                  setCapOpen(false);
+                  setDrawer("jobs");
+                }}
+              >
+                看明细
+              </button>
+            </div>
+          )}
+          <div className="cap-pop-row">
+            <span className="cap-pop-k">
+              轮 {stats.turns} · 工具 {stats.tools}
+              {tokens ? ` · ${tokens}` : ""}
+            </span>
+            {ctxPct !== undefined && <span className="cap-pop-v">上下文 {Math.round(ctxPct * 100)}%</span>}
+          </div>
+        </div>
+      )}
       {drawer === "sessions" && (
         <Sheet
           title="会话列表"
@@ -2132,7 +2186,21 @@ const TurnView = ({ item, sessionId }: { item: TurnItem; sessionId?: string }) =
             </div>
           );
         }
-        if (s.kind === "tool" && s.act) return <ActivityCard key={`a${s.act.key}-${i}`} act={s.act} />;
+        if (s.kind === "tool" && s.act) {
+          // 需求三 UI：同轮连续工具合并为一个折叠行（"密"的最大来源）。
+          const asTool = (k: number) => segs[k] as { kind: string; act?: ToolActivity };
+          if (i > 0 && asTool(i - 1).kind === "tool" && asTool(i - 1).act) return null; // folded
+          let run = 1;
+          while (i + run < segs.length && asTool(i + run).kind === "tool" && asTool(i + run).act) run++;
+          if (run > 1) {
+            const acts = segs
+              .slice(i, i + run)
+              .map((x) => (x as { act?: ToolActivity }).act)
+              .filter((a): a is ToolActivity => !!a);
+            return <ToolGroup key={`g${s.act.key}`} acts={acts} />;
+          }
+          return <ActivityCard key={`a${s.act.key}-${i}`} act={s.act} />;
+        }
         if (s.kind !== "text") return null;
         const segText = stripSystemContext(s.text ?? "");
         if (!segText) return null;
@@ -2156,6 +2224,33 @@ function fallbackSegs(item: TurnItem): { kind: "text" | "thinking" | "tool"; tex
   for (const a of item.activities) out.push({ kind: "tool", act: a });
   if (item.text) out.push({ kind: "text", text: item.text });
   return out;
+}
+
+/** 需求三 UI：同一轮里连续的工具合并成一个折叠行（`▸ 工具组 · 4 步`），
+ *  点开才展开每步。这是面板"太密"的最大来源——原先每一步都占一张卡。 */
+function ToolGroup({ acts }: { acts: ToolActivity[] }) {
+  const [open, setOpen] = useState(false);
+  const running = acts.some((a) => a.state === "running");
+  const uniq = [...new Set(acts.map((a) => a.name || a.label).filter(Boolean))];
+  return (
+    <div className="tool-group">
+      <button className="fold-row" onClick={() => setOpen((v) => !v)} title={uniq.join(" → ")}>
+        <span className="tri">{open ? "▾" : "▸"}</span>
+        <span className="nm">工具组</span>
+        <span className="mut">
+          · {acts.length} 步{running ? " · 进行中" : ""}
+        </span>
+        <span className="mut ellip">{uniq.slice(0, 3).join(" · ")}</span>
+      </button>
+      {open && (
+        <div className="tool-group-body">
+          {acts.map((a) => (
+            <ActivityCard key={a.key} act={a} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Files produced by a finished turn (diff/edit locations) — accent-bordered
@@ -2189,9 +2284,10 @@ function ProducedCard({ files }: { files: { path: string; callId?: string }[] })
   );
 }
 
-/** Per-turn action bar: copy / vote / fork-from-here (web GUI msg-actions). */
+/** Per-turn action bar: copy / fork-from-here. 需求三 UI：按用户要求**移除 👍👎**
+ *  （消息反馈接口暂不接），只保留复制；（从此刻分叉在回合分隔线上）。 */
 function TurnActions({ item, sessionId }: { item: TurnItem; sessionId: string }) {
-  const [vote, setVote] = useState<"up" | "down" | undefined>();
+  void sessionId;
   return (
     <div className="msg-actions">
       <button
@@ -2200,26 +2296,6 @@ function TurnActions({ item, sessionId }: { item: TurnItem; sessionId: string })
         onClick={() => void navigator.clipboard.writeText(stripSystemContext(item.text ?? ""))}
       >
         <Icon name="copy" />
-      </button>
-      <button
-        className={`msg-action-btn${vote === "up" ? " selected-positive" : ""}`}
-        title="有帮助"
-        onClick={() => {
-          setVote("up");
-          post({ t: "feedback", sessionId, kind: "up" });
-        }}
-      >
-        <Icon name="up" />
-      </button>
-      <button
-        className={`msg-action-btn${vote === "down" ? " selected-negative" : ""}`}
-        title="没帮助"
-        onClick={() => {
-          setVote("down");
-          post({ t: "feedback", sessionId, kind: "down" });
-        }}
-      >
-        <Icon name="down" />
       </button>
     </div>
   );

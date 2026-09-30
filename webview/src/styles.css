@@ -1098,3 +1098,45 @@ body.vscode-light .hljs-meta { color: #6f6f6f; }
 
 /* 需求三第三批 UI-B：整体行距节奏（本体为成对绝对行高，约 1.5） */
 body { line-height: 1.5; }
+
+/* ── 需求三 UI 重构：单行头部 + 状态胶囊 + 溢出菜单 + 胶囊浮层 ───────── */
+.header-menu {
+  flex-wrap: wrap; gap: 4px; padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, .06));
+}
+.capsule {
+  display: inline-flex; align-items: center; gap: 7px; margin-left: 6px;
+  padding: 1px 9px; border-radius: 999px; border: 1px solid transparent;
+  background: var(--vscode-badge-background, rgba(127, 127, 127, .18));
+  color: var(--vscode-foreground); font-size: 11.5px; line-height: 1.7;
+  cursor: pointer; white-space: nowrap; max-width: 62%;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.capsule:hover, .capsule.is-on { border-color: var(--vscode-focusBorder, #4a8cff); }
+.capsule .cap-goal { color: var(--vscode-charts-blue, #3794ff); }
+.capsule .cap-pending { color: var(--vscode-editorWarning-foreground, #cca700); }
+.capsule .cap-ctx { color: var(--vscode-descriptionForeground); }
+.dots { font-size: 15px; line-height: 1; letter-spacing: 1px; }
+.cap-pop {
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, .06));
+  padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.cap-pop-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+.cap-pop-k { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-pop-v { flex: none; font-variant-numeric: tabular-nums; }
+
+/* ── 需求三 UI：工具组折叠行（同轮连续工具合并） ────────────────────── */
+.tool-group { margin: 2px 0; }
+.fold-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; color: var(--vscode-foreground); font: inherit;
+  font-size: 11.5px; padding: 2px 6px; border-radius: 5px; cursor: pointer; text-align: left;
+}
+.fold-row:hover { background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, .12)); }
+.fold-row .tri { font-size: 9px; color: var(--vscode-descriptionForeground); flex: none; }
+.fold-row .nm { font-weight: 600; flex: none; }
+.fold-row .mut { color: var(--vscode-descriptionForeground); flex: none; }
+.fold-row .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-group-body { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px 14px; }
