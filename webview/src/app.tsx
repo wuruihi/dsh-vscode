@@ -167,6 +167,18 @@ export function App() {
     () => (showArchived ? hits : hits.filter((h) => !h.archived)),
     [hits, showArchived],
   );
+
+  // 需求三 UI：抽屉只有「会话 / 运行 / 设置」三个域（工作区不再是并列入口，
+  // 而是「会话」域里的一个分组）。域 tab 常驻抽屉顶部，建立"去哪找东西"的记忆。
+  const domainOf = (d: string): "sessions" | "jobs" | "settings" =>
+    d === "settings" ? "settings" : d === "jobs" || d === "subs" || d === "traj" ? "jobs" : "sessions";
+  const pickDomain = (d: string): void => {
+    setDrawer(d as typeof drawer);
+    if (d === "workspace") post({ t: "list-workspaces" });
+    if (d === "schedules") post({ t: "list-schedules" });
+    if (d === "subs" && current) post({ t: "list-subagents", reqId: Date.now(), sessionId: current });
+    if (d === "settings") post({ t: "get-settings" });
+  };
   const [trajFilter, setTrajFilter] = useState("");
   const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -674,13 +686,6 @@ export function App() {
         </div>
         {menuOpen && (
         <div className="header-row header-tool-row header-menu">
-          <PresetPicker
-            presets={presetData}
-            current={current}
-            presetOf={currentSession?.agentPreset}
-            locked={!currentSession?.blank}
-            onSelect={(p) => current && post({ t: "select-preset", sessionId: current, agentPreset: p })}
-          />
           <span className="spacer" />
           <button
             className={`icon-btn${drawer === "workspace" ? " is-on" : ""}`}
@@ -785,6 +790,46 @@ export function App() {
           </div>
         </div>
       )}
+      {/* 需求三 UI：抽屉域 tab（统一心智模型） */}
+      {drawer !== "" && (
+        <>
+          <div className="domain-tabs">
+            {(
+              [
+                ["sessions", "会话"],
+                ["jobs", "运行"],
+                ["settings", "设置"],
+              ] as const
+            ).map(([d, label]) => (
+              <button key={d} className={`domain-tab${domainOf(drawer) === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
+                {label}
+              </button>
+            ))}
+            <span className="spacer" />
+            <button className="chip" title="关闭（Esc）" onClick={() => setDrawer("")}>
+              关闭
+            </button>
+          </div>
+          {domainOf(drawer) === "sessions" && (
+            <div className="subchips">
+              {(
+                [
+                  ["sessions", "会话列表"],
+                  ["workspace", "工作区"],
+                  ["search", "搜索"],
+                  ["schedules", "提醒"],
+                  ["produced", "产出"],
+                ] as const
+              ).map(([d, label]) => (
+                <button key={d} className={`chip${drawer === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       {drawer === "sessions" && (
         <Sheet
           title="会话列表"
@@ -1831,6 +1876,13 @@ export function App() {
           >
             {mode === "queue" ? "排队" : "引导"}
           </button>
+          <PresetPicker
+            presets={presetData}
+            current={current}
+            presetOf={currentSession?.agentPreset}
+            locked={!currentSession?.blank}
+            onSelect={(p) => current && post({ t: "select-preset", sessionId: current, agentPreset: p })}
+          />
           <ModelPicker
             models={chipModels}
             onSelect={(p, m) => {

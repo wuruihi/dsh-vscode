@@ -1151,3 +1151,22 @@ body { line-height: 1.5; }
 }
 .chip:hover { outline: 1px solid var(--vscode-focusBorder, #4a8cff); }
 .chip.on { background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); }
+/* ── 需求三 UI：抽屉域 tab（会话 / 运行 / 设置）+ 会话域子分组 ───────── */
+.domain-tabs {
+  display: flex; align-items: center; gap: 2px; padding: 4px 8px 0; flex: none;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, .06));
+}
+.domain-tab {
+  border: 0; background: none; color: var(--vscode-descriptionForeground);
+  font: inherit; font-size: 12px; padding: 3px 10px 5px; border-radius: 5px 5px 0 0; cursor: pointer;
+}
+.domain-tab:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, .12)); }
+.domain-tab.on {
+  color: var(--vscode-foreground);
+  box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #4a8cff);
+}
+.subchips {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; flex: none;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+}
