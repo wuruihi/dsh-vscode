@@ -90,6 +90,10 @@ export class V012Streams {
   /** Persistent streams (re-opened on every socket generation). */
   private clientId: string | undefined;
   private desiredFollow: string | undefined;
+  /** `job/list` is a per-session STREAM in 0.2.0 (design.md §3.7). It has to be
+   *  re-opened whenever the followed session changes — mirroring desiredFollow. */
+  private desiredJobs: string | undefined;
+  private jobsHandle: StreamHandle | undefined;
   private controlHandle: StreamHandle | undefined;
   private workspaceHandle: StreamHandle | undefined;
   private eventsHandle: StreamHandle | undefined;
@@ -128,6 +132,33 @@ export class V012Streams {
   follow(sessionId: string | undefined): void {
     this.desiredFollow = sessionId;
     if (sessionId && this.ws && this.ws.readyState === WebSocket.OPEN) this.openFollow(sessionId);
+    this.desiredJobs = sessionId;
+    if (sessionId && this.ws && this.ws.readyState === WebSocket.OPEN) this.openJobList(sessionId);
+  }
+
+  /** Job list for one session. The frame is a FULL snapshot (`{type:"rows",
+   *  jobs}` — no baseline/delta in 0.2.0); unknown frame types are logged once
+   *  and skipped rather than thrown (loose-parsing rule). */
+  private openJobList(sessionId: string): void {
+    this.jobsHandle?.cancel();
+    this.jobsHandle = this.openStream(
+      "job/list",
+      { request: { sessionId } },
+      {
+        onItem: (value) => {
+          const frame = value as { type?: string; jobs?: unknown[] };
+          if (frame?.type !== "rows") {
+            warn(`[v012] job/list unexpected frame for ${sessionId}: ${String(frame?.type)}`);
+            return;
+          }
+          this.opts.onMux({
+            rpcId: "",
+            payload: { type: "session/jobs", sessionId, jobs: Array.isArray(frame.jobs) ? frame.jobs : [] },
+          });
+        },
+        onError: () => warn(`[v012] job/list error for ${sessionId}`),
+      },
+    );
   }
 
   /** One-shot history tail page for `session.history` under v012. */
@@ -331,6 +362,8 @@ export class V012Streams {
       onError: () => undefined,
     });
     if (this.desiredFollow) this.openFollow(this.desiredFollow);
+    // Per-session stream: must be re-opened with the socket generation too.
+    if (this.desiredJobs) this.openJobList(this.desiredJobs);
   }
 
   private openFollow(sessionId: string): void {

@@ -4,6 +4,34 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.19.3 — 需求三第二批：子代理四条路径修复 / 计划评审验证 / Goal 控制 / 后台任务接入 / 旧 CLI 收尾
+
+**流程**：方案 v1 → 独立子代理审查（10 条阻塞项 + 8 条建议，其中"怎么修"有**三处实质错误**）→ 我逐条独立复核（含实测）→ v2 定稿 → 用户确认 → 执行。审查这次的价值同样是"把已坏的功能找出来"。
+
+**T4 子代理链路（修坏：四条路径全失效）**
+
+- **列表**：`subagents/list` 在 0.2.0 已移除 ⇒ 改**双源**：`session/list` 的 `parentSessionId`/`origin`/`running` + 父会话 `subagentCatalog` 投影（catalog 的 `label` 是派发的任务名，行的 title 是提示词开头，故两者都要；`mode` 一并缓存供转录使用）。
+- **转录**：0.2.0 对子会话用普通 session 地址**必被拒**（实测 `session/agent-busy: subagent Sessions require their durable parent address`）⇒ 引入 `SessionAddress` union，`session/follow` 快照与 `session/page` 一律改用 `{kind:"subagent",parentSessionId,childSessionId,mode}`。
+- **追问 / 打断**：改走专用端点 `subagents/prompt`（`{requestId,parentSessionId,childSessionId,mode:"continuable",delivery:"queue"|"steer",content}`）与 `subagents/interruptByParent`（平铺三键；`mode` 的 schema 只有 `literal("continuable")` 一个合法值）；仅 legacy flavor 回退 `session.*`-on-child（v012 下那条路是被拒的）。
+- 条目 `activity` 值与渲染端对齐为 `"active"`，否则"打断"按钮永不出现。
+
+**T5 计划评审**：只读部分已核实（`userQuestions` 投影 ＝ `{active,settled}`；应答载体 `$events/result` 实测 HTTP 200 受理；`userQuestions/answer {agentId,callId,answer:{answers:[{id,selected,custom?}]}}` 与 `attachWait {agentId,callId}` 形状由 schema 确认）。**真实计划评审需要一次 plan-mode 会话（属写操作，验证阶段不做）** ⇒ 判据：① 回执 `accepted===true` ② 该会话 `userQuestions.active` 中该 callId 消失且状态转为 continued ③ 随后回合恢复产出。三条同时成立才算通过，留给用户手测。
+
+**T6 Goal 控制（只读 → 可控）**：GoalBar 新增「暂停 / 继续 / 完成 / 清空（二次确认）」，无目标时提供「＋设定目标」。`ref` 严格取自投影内层 `value.goal.{id,revision}`（不在顶层——v1 方案在此写错）；成功**不写本地乐观态**，以 `goal` 投影刷新为权威；失败一律 notify 可见。
+
+**T7 后台任务（修坏：0.2.0 上恒空）**：`job/list` 是**流式**端点（一元直调 → `gateway/signature-invalid: stream Remote methods must be opened through the stream carrier`），且帧只有 `{type:"rows", jobs}` 全量快照（无 baseline/增量）⇒ `remote.ts` 镜像 `desiredFollow` 增加 `desiredJobs`/`openJobList`（会话切换与重连都重开、旧句柄先 cancel），未知帧记一次日志不抛（宽松解析铁律）；面板新增「终止」（`job/kill {request:{jobId}}`，二次确认）与 `output.spillPaths` 可点（大输出落盘路径，复用第一批的 `open-file` 语义）。
+
+**T-CLI 收尾**：旧 CLI 已被用户删除 ⇒ 探测不到 CLI 时**不再提供"启动旧版"入口**（提示文案同步说明），`instances.ts` 候选、`autoStart`、`startDsh` 代码路径**全部保留**（重装即恢复）；`esbuild.mjs` 过期日志文案修正为 `dist/extension.cjs`。
+
+**验证（全部实测）**
+
+- `pnpm compile` 双 tsconfig exit 0；`pnpm build` exit 0
+- `pnpm regress:all`：fold **24/24**、fence 8/8、pathlink 8/8、locate 25/25（1 例真实机器集成用例环境 skip）、model 23/23、repair 14/14
+- `pnpm args:audit`（桌面版 0.2.0 asar）：**0 处不匹配**，覆盖点 **29 → 32** ＝ 11 `v012Request` + 7 流开帧（+`job/list`）+ 10 `{request}` 包裹（+`subagents.prompt`、`job.kill`）+ 4 会话级写集合
+- `pnpm smoke --base-url http://127.0.0.1:19387 --from-credentials`：**16/16**，新增两条只读断言实测 —— `session/projections carries subagentCatalog + agentTeam — 20 keys`、`job/list opens as a stream and answers rows — type=rows`；测试会话已归档、文件已清理，**无残留**
+
+**待用户手测**：① 子代理抽屉非空、点开有转录 ② 追问 + 打断各一条 ③ 计划评审（按上面三条判据）④ Goal 建/暂停/继续/完成/清空 ⑤ 后台任务出现 + 终止 + 落盘输出可点 ⑥ 无实例时的提示不再出现失效的"启动旧版"动作
+
 ## v0.19.2 — 需求三第一批：跨会话搜索 / 置顶归档（**修好"归档从未生效"**）/ 交付物清单
 
 **流程**：吴胖圈选第一批三项 → 方案 v1 → **独立子代理审查（7 维度全 FAIL，13 条阻塞项 + 8 条建议）** → 修订 v2 → 用户确认后执行。审查推翻了我 v1 的核心判断，这条也是本次最大的实际收益。

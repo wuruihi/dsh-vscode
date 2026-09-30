@@ -41,5 +41,5 @@ if (watch) {
 } else {
   await esbuild.build(extension);
   await esbuild.build(webview);
-  console.log("[esbuild] built dist/extension.js + dist/webview.js");
+  console.log("[esbuild] built dist/extension.cjs + dist/webview.js");
 }

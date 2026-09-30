@@ -501,6 +501,16 @@ if (det.flavor === "legacy") {
 
   const followId = openStream("session/follow", { request: { address: { kind: "session", sessionId } } });
   const snap = await nextItem(followId, 8000);
+  // 需求三第二批（只读断言）：子代理/编队投影键存活；job/list 是 stream 且首帧 rows
+  const proj = await call("session/projections", { request: { sessionId } }, 30_000, "v012");
+  ok(
+    "session/projections carries subagentCatalog + agentTeam",
+    !!proj?.values && "subagentCatalog" in proj.values && "agentTeam" in proj.values,
+    Object.keys(proj?.values ?? {}).length + " keys",
+  );
+  const jobsStreamId = openStream("job/list", { request: { sessionId } });
+  const jobsFrame = await nextItem(jobsStreamId, 8000);
+  ok("job/list opens as a stream and answers rows", jobsFrame?.value?.type === "rows", `type=${jobsFrame?.value?.type}`);
   ok(
     "session/follow snapshot",
     snap?.type === "item" && snap.value?.type === "snapshot" && Array.isArray(snap.value?.records),

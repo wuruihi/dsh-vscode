@@ -98,7 +98,7 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 
 ### 3.3 用到的方法
 
-`host.describe`（探活）、`workspace.list`（**v012 无此端点**：`client.ts` 内部转 `workspacesOnce()` → `workspace/follow` baseline，详见 §3.6）/`workspace.create{path}`/`workspace.pinSession{sessionId}`/`workspace.unpinSession{sessionId}`/`workspace.archiveSession{sessionId}`/`workspace.unarchiveSession{sessionId}`、`session.list`/`session.create{workspaceId|cwd, agentPreset?}`/`session.prompt{sessionId, mode:"queue"|"steer", content:[{type:"text",text}|{type:"image",mediaType,data}], clientTimeZone?}`/`session.cancel{sessionId}`/`session.history{sessionId, maxMessages?, beforeSeq?}`/`session.models`/`session.selectModel{sessionId,provider,model,reasoningEffort?}`/`session.rename`/`session.updateQueue`
+`host.describe`（探活）、`workspace.list`（**v012 无此端点**：`client.ts` 内部转 `workspacesOnce()` → `workspace/follow` baseline，详见 §3.6）/`workspace.create{path}`/`workspace.pinSession{sessionId}`/`workspace.unpinSession{sessionId}`/`workspace.archiveSession{sessionId}`/`workspace.unarchiveSession{sessionId}`、`subagents/prompt{request}`（§3.7）/`subagents/interruptByParent{childSessionId,parentSessionId,mode}`、`goals/create|edit|pause|resume|complete|clear`（§3.7）、`job/list`（**流式**）/`job/kill{request:{jobId}}`（§3.7）、`session.list`/`session.create{workspaceId|cwd, agentPreset?}`/`session.prompt{sessionId, mode:"queue"|"steer", content:[{type:"text",text}|{type:"image",mediaType,data}], clientTimeZone?}`/`session.cancel{sessionId}`/`session.history{sessionId, maxMessages?, beforeSeq?}`/`session.models`/`session.selectModel{sessionId,provider,model,reasoningEffort?}`/`session.rename`/`session.updateQueue`
 
 ### 3.4 已知坑（必须内置对策）
 

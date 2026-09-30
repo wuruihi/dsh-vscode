@@ -139,7 +139,7 @@ export type ExtToView =
   | { t: "files"; reqId: number; items: { path: string; rel: string }[] }
   | { t: "slash"; reqId: number; items: { kind: "skill" | "command"; name: string; description: string }[] }
   | { t: "picked"; reqId: number; items: { path: string; rel: string }[] }
-  | { t: "jobs"; sessionId: string; jobs: { id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[] }
+  | { t: "jobs"; sessionId: string; jobs: { id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[] }
   | { t: "subagents"; sessionId: string; entries: { id: string; mode: string; label: string; activity: string; hasChildren: boolean }[] }
   | { t: "subagent-history"; sessionId: string; entries: unknown[] }
   /** settings/describe result (schema-driven server settings form). */
@@ -208,4 +208,9 @@ export type ViewToExt =
   // 需求三第一批：跨会话搜索（宿主侧按需过滤）+ 置顶/取消归档
   | { t: "search-sessions"; reqId: number; query: string }
   | { t: "pin-session"; sessionId: string; pinned: boolean }
-  | { t: "unarchive-session"; sessionId: string };
+  | { t: "unarchive-session"; sessionId: string }
+  /** Goal control (需求三第二批): ref comes from the goal projection's
+   *  value.goal.{id,revision} — never from the projection top level. */
+  | { t: "goal-action"; action: "pause" | "resume" | "complete" | "clear"; ref: { id: string; revision: number } }
+  | { t: "goal-create"; objective: string }
+  | { t: "kill-job"; jobId: string };

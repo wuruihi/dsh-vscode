@@ -103,7 +103,8 @@ export function App() {
   >("");
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
-  const [jobs, setJobs] = useState<{ id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[]>([]);
+  const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
+  const [killConfirm, setKillConfirm] = useState<string | null>(null);
   const [subagentEntries, setSubagentEntries] = useState<{ id: string; mode: string; label: string; activity: string; hasChildren: boolean }[]>([]);
   // subagent transcript sheet: which child is open + its history events
   const [subView, setSubView] = useState<{ id: string; label?: string; mode: string; activity: string } | null>(null);
@@ -1048,10 +1049,7 @@ export function App() {
       {drawer === "jobs" && (
         <Sheet title="⚙️ 后台任务" onClose={() => setDrawer("")}>
           {jobs.length === 0 ? (
-            <div className="muted pad">
-              当前会话没有后台任务。agent 启动的 bash/pwsh/子代理等任务会出现在这里；
-              需要终止时可让 agent 执行 job_kill。
-            </div>
+            <div className="muted pad">当前会话没有后台任务（0.2.0 起由 job/list 流驱动）。</div>
           ) : (
             jobs.map((j) => {
               const dur =
@@ -1070,7 +1068,33 @@ export function App() {
                       {dur ? ` · ${dur}` : ""}
                       {j.detail ? ` · ${j.detail}` : ""}
                     </span>
+                    {j.output?.spillPaths && j.output.spillPaths.length > 0 && (
+                      <span className="job-spill muted">
+                        输出已落盘（{typeof j.output.total === "number" ? `${j.output.total} 字节` : "大输出"}）：
+                        {j.output.spillPaths.map((p) => (
+                          <button key={p} className="link-btn" title={p} onClick={() => post({ t: "open-file", path: p })}>
+                            {p.split(/[\\/]/).pop() ?? p}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                   </span>
+                  {!j.finishedAt &&
+                    (killConfirm === j.id ? (
+                      <button
+                        className="link-btn danger"
+                        onClick={() => {
+                          post({ t: "kill-job", jobId: j.id });
+                          setKillConfirm(null);
+                        }}
+                      >
+                        确认终止
+                      </button>
+                    ) : (
+                      <button className="link-btn" onClick={() => setKillConfirm(j.id)}>
+                        终止
+                      </button>
+                    ))}
                 </div>
               );
             })
@@ -2142,15 +2166,62 @@ const GOAL_PHASE_LABEL: Record<string, string> = {
 };
 
 /** Goal dock bar — the current session's goal projection, pinned under the
- *  header (web GUI GoalBar dock). phase: active|complete|paused|blocked. */
+ *  header (web GUI GoalBar dock). phase: active|complete|paused|blocked.
+ *  需求三第二批：从只读变可控（goals/* 端点）——ref 必须取自 value.goal 的
+ *  {id,revision}，成功与否都以 goal 投影刷新为准（不写本地乐观态）。 */
 function GoalBar({ data }: { data: any }) {
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const goal = data?.goal;
-  if (!goal || typeof goal.objective !== "string") return null;
+  if (data === undefined) return null; // projection not seen yet
+  if (!goal || typeof goal.objective !== "string") {
+    return (
+      <div className="goal-bar goal-none">
+        <span className="goal-glyph">◎</span>
+        {creating ? (
+          <>
+            <input
+              autoFocus
+              className="goal-input"
+              placeholder="给这个会话定一个目标（会按目标轮次自动续跑）"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setCreating(false);
+                if (e.key === "Enter" && draft.trim()) {
+                  post({ t: "goal-create", objective: draft.trim() });
+                  setDraft("");
+                  setCreating(false);
+                }
+              }}
+            />
+            <button
+              className="link-btn"
+              onClick={() => {
+                if (!draft.trim()) return;
+                post({ t: "goal-create", objective: draft.trim() });
+                setDraft("");
+                setCreating(false);
+              }}
+            >
+              建立
+            </button>
+          </>
+        ) : (
+          <button className="link-btn" onClick={() => setCreating(true)}>
+            ＋ 设定目标
+          </button>
+        )}
+      </div>
+    );
+  }
   const phase = typeof goal.phase === "string" ? goal.phase : "active";
   const label = GOAL_PHASE_LABEL[phase] ?? phase;
   const rounds = typeof data?.roundsStarted === "number" ? data.roundsStarted : undefined;
   const max = typeof goal.maxGoalRounds === "number" ? goal.maxGoalRounds : undefined;
   const blockedMsg = phase === "blocked" ? goal.blockedReason?.message : undefined;
+  const ref = { id: String(goal.id), revision: Number(goal.revision) };
   return (
     <div
       className={`goal-bar goal-${phase}`}
@@ -2160,6 +2231,38 @@ function GoalBar({ data }: { data: any }) {
       <span className="goal-objective">{goal.objective}</span>
       <span className="goal-phase-badge">{label}</span>
       {rounds !== undefined && <span className="goal-rounds">{max !== undefined ? `${rounds}/${max}` : rounds} 轮</span>}
+      <span className="goal-actions">
+        {phase === "active" && (
+          <button className="link-btn" title="暂停目标（不再自动续跑）" onClick={() => post({ t: "goal-action", action: "pause", ref })}>
+            暂停
+          </button>
+        )}
+        {phase === "paused" && (
+          <button className="link-btn" title="继续目标" onClick={() => post({ t: "goal-action", action: "resume", ref })}>
+            继续
+          </button>
+        )}
+        {phase !== "complete" && (
+          <button className="link-btn" title="标记目标完成" onClick={() => post({ t: "goal-action", action: "complete", ref })}>
+            完成
+          </button>
+        )}
+        {confirmClear ? (
+          <button
+            className="link-btn danger"
+            onClick={() => {
+              post({ t: "goal-action", action: "clear", ref });
+              setConfirmClear(false);
+            }}
+          >
+            确认清空
+          </button>
+        ) : (
+          <button className="link-btn" title="清空目标" onClick={() => setConfirmClear(true)}>
+            清空
+          </button>
+        )}
+      </span>
     </div>
   );
 }

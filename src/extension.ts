@@ -11,6 +11,7 @@ import {
   type DshInstance,
 } from "./connection/instances.js";
 import { SessionManager } from "./session/manager.js";
+import { locateDshBin } from "./connection/locate.js";
 import { DshChatView } from "./ui/panel.js";
 import { DiffService } from "./diff/provider.js";
 import { IdeBridge } from "./ide/bridge.js";
@@ -145,10 +146,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       status.tooltip = tooltipFor("disconnected");
       return;
     }
-    const buttons = [...(appPath ? ["打开桌面版"] : []), "选择实例…", "启动本地 dsh web（旧版）"];
+    // 2026-09-30: the user deleted their legacy CLI, so do not promise a launch
+    // we cannot perform — offer the old-CLI action only when the CLI actually
+    // resolves (the code path itself is kept: reinstalling restores it).
+    const haveLegacyCli = !!locateDshBin({
+      explicit: vscode.workspace.getConfiguration("dsh-vscode").get<string>("dshBinPath", ""),
+      home,
+    }).hit;
+    const buttons = [
+      ...(appPath ? ["打开桌面版"] : []),
+      "选择实例…",
+      ...(haveLegacyCli ? ["启动本地 dsh web（旧版）"] : []),
+    ];
     const pick = await vscode.window.showWarningMessage(
-      `DSH: 没有检测到运行中的实例（桌面版 ${DESKTOP_APP_PORT} 与旧版 ${LOCAL_WEB_PORT} 都没有响应）。` +
-        (appPath ? "可以打开桌面版 App —— 功能最全，且与 GUI 共享会话。" : ""),
+      `DSH: 没有检测到运行中的实例（桌面版 ${DESKTOP_APP_PORT}` +
+        `${haveLegacyCli ? ` 与旧版 ${LOCAL_WEB_PORT}` : ""} 都没有响应）。` +
+        (appPath ? "可以打开桌面版 App —— 功能最全，且与 GUI 共享会话。" : "") +
+        (haveLegacyCli ? "" : "（本机未检测到旧版 dsh CLI，已隐藏“启动旧版”入口。）"),
       ...buttons,
     );
     if (pick === "打开桌面版" && appPath) {
@@ -319,6 +333,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         break;
       case "search-sessions":
         manager.searchSessions(m.reqId, m.query);
+        break;
+      case "goal-action":
+        void manager.goalAction(m.action, m.ref);
+        break;
+      case "goal-create":
+        void manager.createGoal(m.objective);
+        break;
+      case "kill-job":
+        void manager.killJob(m.jobId);
         break;
       case "respond-approval":
         void manager.respondApproval(m.rpcId, m.sessionId, m.approvalId, m.outcome);

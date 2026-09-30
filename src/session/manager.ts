@@ -811,14 +811,14 @@ export class SessionManager {
         });
       } else {
         await this.lifecycle.client.call("subagents.prompt", {
-          request: {
-            requestId: `subprompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-            parentSessionId,
-            childSessionId: childId,
-            mode: "continuable",
-            delivery: "queue",
-            content: [{ type: "text", text }],
-          },
+          // NB: `subagents.prompt` is in client.ts' {request}-wrapping set, so the
+          // payload here is the INNER object — wrapping again would double-nest.
+          requestId: `subprompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          parentSessionId,
+          childSessionId: childId,
+          mode: "continuable",
+          delivery: "queue",
+          content: [{ type: "text", text }],
         });
       }
       this.host.post({ t: "notify", kind: "info", message: "已发送给子代理" });
@@ -919,6 +919,45 @@ export class SessionManager {
 
   async unarchiveSession(sessionId: string): Promise<void> {
     await this.workspaceWrite("workspace.unarchiveSession", sessionId, "取消归档");
+  }
+
+  // ---------- Goal 控制（需求三第二批，design.md §3.7）----------
+  //
+  // ref 必须来自 `goal` 投影的 value.goal.{id,revision}（不在投影顶层）。
+  // 成功不写本地乐观态：`goal` 投影刷新才是权威；失败一律 notify 可见。
+  async goalAction(
+    action: "pause" | "resume" | "complete" | "clear",
+    ref: { id: string; revision: number },
+  ): Promise<void> {
+    const labels: Record<string, string> = { pause: "暂停", resume: "继续", complete: "完成", clear: "清空" };
+    try {
+      await this.lifecycle.client.call(`goals.${action}`, { agentId: this.currentSession, ref });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "error", message: `目标${labels[action] ?? action}失败：${errText(err)}` });
+    }
+  }
+
+  async createGoal(objective: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("goals.create", {
+        agentId: this.currentSession,
+        request: { objective },
+      });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "error", message: `设定目标失败：${errText(err)}` });
+    }
+  }
+
+  // ---------- 后台任务（需求三第二批，design.md §3.7）----------
+  /** `job/list` is a STREAM endpoint in 0.2.0, opened by the stream layer on
+   *  follow; only the kill is a unary call here. */
+  async killJob(jobId: string): Promise<void> {
+    try {
+      await this.lifecycle.client.call("job.kill", { jobId });
+      this.host.post({ t: "notify", kind: "info", message: "已请求终止任务" });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "error", message: `终止任务失败：${errText(err)}` });
+    }
   }
 
   /** All workspace mutations refresh the list afterwards (single code path). */
