@@ -1170,3 +1170,15 @@ body { line-height: 1.5; }
   display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; flex: none;
   border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
 }
+/* ── 需求三 UI：窄档（<520px）只改呈现不砍功能 ─────────────────────── */
+@media (max-width: 520px) {
+  .capsule { max-width: 46%; gap: 5px; padding: 1px 7px; }
+  .capsule .cap-ctx { display: none; }
+  .capsule .cap-goal { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .header-session-row { gap: 3px; }
+  .sheet, .sheet-wide { width: 100%; }
+  .canvas { padding: 10px 10px 6px; }
+  .subchips { padding: 4px 6px; }
+  .domain-tabs { padding: 3px 6px 0; }
+  .msg-role { display: none; }
+}
