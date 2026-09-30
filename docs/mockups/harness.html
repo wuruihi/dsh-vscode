@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>DSH 插件面板 · 截图自检环境（stub host）</title>
+<!-- 真实 webview 源码编译产物；宿主消息用桩喂进去，目的是"能看见界面" -->
+<link rel="stylesheet" href="../../webview/src/styles.css" />
+<style>
+  html, body { height: 100%; margin: 0; background: var(--vscode-editor-background, #1e1e1e); }
+  /* 模拟 VSCode 主题变量（默认 Dark Modern 取值），让样式有颜色 */
+  :root {
+    --vscode-editor-background: #1e1e1e; --vscode-foreground: #cccccc;
+    --vscode-descriptionForeground: #9d9d9d; --vscode-widget-border: #3c3c3c;
+    --vscode-list-hoverBackground: #2a2d2e; --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-list-activeSelectionForeground: #ffffff; --vscode-badge-background: #4d4d4d;
+    --vscode-badge-foreground: #ffffff; --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff; --vscode-focusBorder: #0078d4;
+    --vscode-editorWidget-background: #252526; --vscode-input-background: #313131;
+    --vscode-input-foreground: #cccccc; --vscode-input-border: #3c3c3c;
+    --vscode-editor-font-family: Consolas, "Cascadia Mono", monospace;
+    --vscode-editorWarning-foreground: #cca700; --vscode-errorForeground: #f48771;
+    --vscode-textCodeBlock-background: #1b1b1b; --vscode-charts-blue: #3794ff;
+    --vscode-charts-green: #89d185; --vscode-charts-purple: #b180d7;
+    --dsh-fg: #cccccc; --dsh-muted: #9d9d9d; --dsh-accent: #0078d4; --dsh-btn-fg: #ffffff;
+    --dsh-card: #252526; --dui-card: #252526; --dui-border: #3c3c3c;
+  }
+  #stage { height: 100%; display: flex; justify-content: center; padding: 10px; box-sizing: border-box; }
+  #panel { width: var(--panel-w, 640px); height: 100%; display: flex; flex-direction: column; overflow: hidden;
+           border: 1px solid #3c3c3c; border-radius: 6px; }
+  #log { position: fixed; left: 8px; bottom: 8px; max-width: 44vw; max-height: 22vh; overflow: auto;
+         font: 11px/1.45 Consolas, monospace; color: #8a8a8a; background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; }
+  #hint { position: fixed; right: 8px; bottom: 8px; font: 11px/1.5 Consolas, monospace; color: #8a8a8a;
+          background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="panel"></div></div>
+<div id="log"></div>
+<div id="hint">查询参数：?w=640（面板宽）&amp;drawer=sessions|jobs|settings|""（打开哪个抽屉）</div>
+
+<script>
+  // ── 1) 桩宿主：webview 通过 window.__dshApi.postMessage 上行 ──
+  const params = new URLSearchParams(location.search);
+  const width = Number(params.get("w") || 640);
+  document.documentElement.style.setProperty("--panel-w", width + "px");
+  const drawer = params.get("drawer") ?? "";
+  const sent = [];
+  const api = {
+    postMessage(m) { sent.push(m); if (m && m.t === "ready") feed(); },
+    getState: () => ({}),
+    setState: () => {},
+  };
+  window.__dshApi = api;
+  window.acquireVsCodeApi = () => api;
+  const logEl = document.getElementById("log");
+  const log = (s) => { logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+  // ── 2) 假数据（形状对齐真实 wire）──
+  const SESSIONS = [
+    { sessionId: "s1", title: "需求三批 UI 重构方案讨论", running: true, blank: false, cwd: "D:\\03-Projects\\Plugins\\dsh-vscode" },
+    { sessionId: "s2", title: "插件面板 UI 不好看排查", running: false, blank: false, cwd: "D:\\03-Projects\\Plugins\\dsh-vscode" },
+    { sessionId: "s3", title: "桌面版能力盘点（136 端点）", running: false, blank: false, cwd: "D:\\03-Projects\\Plugins\\dsh-vscode" },
+    { sessionId: "s4", title: "子代理链路修复验证", running: true, blank: false, cwd: "D:\\03-Projects\\Plugins\\dsh-vscode", subagents: { total: 3, running: 1 } },
+    { sessionId: "s5", title: "定时提醒与任务面板", running: false, blank: false, cwd: "D:\\01-Work" },
+    { sessionId: "s6", title: "反诈预警策略分析", running: false, blank: false, cwd: "D:\\01-Work" },
+    { sessionId: "s7", title: "（未命名会话）", running: false, blank: true, cwd: "D:\\01-Work" },
+    { sessionId: "s8", title: "旧 CLI 迁移记录", running: false, blank: false, cwd: "D:\\01-Work" },
+  ];
+  const HISTORY = [
+    { event: { type: "user/message", seq: 1, time: Date.now() - 60000, data: { content: [{ type: "text", text: "1/3 屏宽，最高频就是发消息、切会话、看你在干什么" }], source: { kind: "user" } } } },
+    { event: { type: "turn/start", seq: 2, time: Date.now() - 59000, data: { turn: 1 } } },
+    { event: { type: "assistant/message", seq: 3, time: Date.now() - 58000, data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "先说结论，再给分层。段落之间留 10px，读起来不糊成一块。\n\n### 结构定稿要点\n\n- 纵向空间只给主任务\n- 管理动作收进一个抽屉按域分 tab\n\n```bash\nnode scripts/fold-regress.cjs   # 24/24\n```\n\n> 可读性来自层级与节奏，不来自装饰。\n\n以上" }] } } },
+    { event: { type: "turn/end", seq: 4, time: Date.now() - 57000, data: { turn: 1 } } },
+  ];
+  const TOOLS = [
+    { callId: "c1", name: "read" }, { callId: "c2", name: "edit" }, { callId: "c3", name: "pwsh" }, { callId: "c4", name: "edit" },
+  ];
+
+  function feed() {
+    const send = (m) => window.postMessage(m, "*");
+    send({ t: "conn", state: "connected", baseUrl: "http://127.0.0.1:19387" });
+    send({ t: "caps", flavor: "v012" });
+    send({ t: "sessions", items: SESSIONS, current: "s1" });
+    send({
+      t: "workspaces",
+      items: [
+        { workspaceId: "w1", path: "D:\\03-Projects\\Plugins\\dsh-vscode", title: "dsh-vscode", sessionIds: ["s1", "s2", "s3", "s4"] },
+        { workspaceId: "w2", path: "D:\\01-Work", title: "01-Work", sessionIds: ["s5", "s6", "s7", "s8"] },
+      ],
+      archivedSessionIds: ["s8"],
+      pinnedSessionIds: ["s2"],
+    });
+    send({ t: "flags", archivedSessionIds: ["s8"], pinnedSessionIds: ["s2"] });
+    send({ t: "history", sessionId: "s1", entries: HISTORY, hasMore: true });
+    send({ t: "projection", sessionId: "s1", key: "goal", value: { goal: { id: "g1", revision: 3, objective: "把面板 UI 按设计图重构完", phase: "active", maxGoalRounds: 12 }, roundsStarted: 4 } });
+    send({ t: "projection", sessionId: "s1", key: "inbox", value: { "next-turn": [{ id: "m1", content: [{ type: "text", text: "先按 B 做，顺便把会话区也重排" }] }, { id: "m2", content: [{ type: "text", text: "截图自检要能切宽窄档" }] }], "next-step": [] } });
+    send({ t: "projection", sessionId: "s1", key: "contextPressure", value: { pressure: 0.62 } });
+    send({ t: "tokens", label: "12.4k tokens" });
+    send({ t: "presets", data: { presets: [{ id: "default", name: "默认装配", isDefault: true }] } });
+    send({ t: "models", sessionId: "s1", data: { current: { provider: "deepseek", model: "deepseek-v4.1" }, routable: true, groups: [], failures: [] } });
+    // 伪造若干工具事件，验证"工具组折叠"
+    for (const [i, t] of TOOLS.entries()) {
+      send({ t: "mux-batch", sessionId: "s1", frames: [
+        { event: { type: "tool/call", seq: 10 + i * 2, time: Date.now() - 50000 + i * 1000, data: { turn: 2, step: i + 1, callId: t.callId, name: t.name, arguments: "{}" } } },
+        { event: { type: "tool/result", seq: 11 + i * 2, time: Date.now() - 49500 + i * 1000, data: { turn: 2, step: i + 1, callId: t.callId, result: "ok" } } },
+      ] });
+    }
+    if (drawer) window.postMessage({ t: "open-search" }, "*");
+    log("fed: conn/sessions/workspaces/history/projections/tools" + (drawer ? " + drawer=" + drawer : ""));
+  }
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (m && m.t) log("↑ " + m.t + (m.sessionId ? " (" + m.sessionId + ")" : ""));
+  });
+</script>
+<script src="../../dist/webview.js"></script>
+<script>
+  // 抽屉：查询参数直接点开对应入口（截图用）
+  setTimeout(() => {
+    if (drawer) {
+      const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("title") || "").includes("打开抽屉"));
+      if (btn) btn.click(); else log("找不到抽屉按钮");
+      if (drawer === "jobs" || drawer === "settings") {
+        const tab = [...document.querySelectorAll(".domain-tab")].find((b) => b.textContent.trim() === (drawer === "jobs" ? "运行" : "设置"));
+        if (tab) tab.click();
+      }
+    }
+    log("ready for screenshot");
+  }, 700);
+</script>
+</body>
+</html>

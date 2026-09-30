@@ -1218,3 +1218,11 @@ body { line-height: 1.5; }
 .sheet-body { display: flex; flex-direction: column; }
 .session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .subchips .chip { flex: 0 0 auto; }
+/* 会话域筛选区：搜索独占一行 + 筛选一行（域 tab 之下、列表之上） */
+.sheet-filters {
+  flex: none; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+}
+.sheet-filters .sheet-search { max-width: none; width: 100%; font-size: 12px; padding: 4px 8px; }
+.sheet-filters .chips { display: flex; gap: 6px; }
+.sheet-filters .chip { padding: 2px 12px; }

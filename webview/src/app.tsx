@@ -871,43 +871,42 @@ export function App() {
         <Sheet
           title="会话列表"
           onClose={() => setDrawer("")}
-          headControls={
-            <>
-              <input
-                className="drawer-search sheet-search"
-                placeholder="搜索标题 / 路径…"
-                value={sessQuery}
-                onChange={(e) => setSessQuery(e.target.value)}
-              />
-              <span className="chips">
-                <button
-                  className={`chip${!showArchived && !runningOnly ? " on" : ""}`}
-                  title="全部会话（归档默认隐藏）"
-                  onClick={() => {
-                    setShowArchived(false);
-                    setRunningOnly(false);
-                  }}
-                >
-                  全部
-                </button>
-                <button
-                  className={`chip${runningOnly ? " on" : ""}`}
-                  title="只看正在运行的会话"
-                  onClick={() => setRunningOnly((v) => !v)}
-                >
-                  运行中
-                </button>
-                <button
-                  className={`chip${showArchived ? " on" : ""}`}
-                  title="显示已归档会话"
-                  onClick={() => setShowArchived((v) => !v)}
-                >
-                  归档
-                </button>
-              </span>
-            </>
-          }
         >
+        {/* 会话域：筛选（搜索独占一行 + 全部/运行中/归档）在域 tab 之下、列表之上 */}
+        <div className="sheet-filters">
+          <input
+            className="drawer-search sheet-search"
+            placeholder="搜索标题 / 路径…"
+            value={sessQuery}
+            onChange={(e) => setSessQuery(e.target.value)}
+          />
+          <span className="chips">
+            <button
+              className={`chip${!showArchived && !runningOnly ? " on" : ""}`}
+              title="全部会话（归档默认隐藏）"
+              onClick={() => {
+                setShowArchived(false);
+                setRunningOnly(false);
+              }}
+            >
+              全部
+            </button>
+            <button
+              className={`chip${runningOnly ? " on" : ""}`}
+              title="只看正在运行的会话"
+              onClick={() => setRunningOnly((v) => !v)}
+            >
+              运行中
+            </button>
+            <button
+              className={`chip${showArchived ? " on" : ""}`}
+              title="显示已归档会话"
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              归档
+            </button>
+          </span>
+        </div>
         <div className="session-list">
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}
           {sessions
@@ -2263,6 +2262,7 @@ function Sheet({ title, onClose, wide, headControls, children }: { title: ReactN
   return (
     <div className="sheet-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`sheet${wide ? " sheet-wide" : ""}`}>
+        {SHEET_TABS && <div className="sheet-tabs">{SHEET_TABS}</div>}
         <div className="sheet-head">
           <span className="sheet-title">{title}</span>
           {headControls && <span className="sheet-controls">{headControls}</span>}
@@ -2270,7 +2270,6 @@ function Sheet({ title, onClose, wide, headControls, children }: { title: ReactN
             <Icon name="x" size={13} />
           </button>
         </div>
-        {SHEET_TABS && <div className="sheet-tabs">{SHEET_TABS}</div>}
         <div className="sheet-body">{children}</div>
       </div>
     </div>
