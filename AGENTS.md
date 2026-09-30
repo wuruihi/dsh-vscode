@@ -44,6 +44,7 @@ pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例
 
 - 改 `src/`：`pnpm compile` 必须过。
 - 改 `webview/`：`pnpm build` + VSCode 里 `Developer: Reload Window` 手测。
+- **打包前必须 `pnpm compile` 0 错**（硬门槛，不是参考项）：esbuild **不校验类型**，类型错照样能打包并安装。2026-09-30 实测教训——会话行 `⋯` 菜单因漏打 `menu-open` 类而不生效，只有 `tsc` 的"变量未使用"把它暴露出来，当时那一版已经打包安装过了。
 - 涉及协议交互：先 `pnpm smoke` 再手测。
 - **每次 DSH 升级后必跑 `pnpm args:audit`**（smoke 只盖连接层主干，盖不到
   `commands/execute`、`subagents/list` 这类业务端点——v0.18.3 的权限切换

@@ -1186,3 +1186,20 @@ body { line-height: 1.5; }
 .session-list .session-row .icon-btn.mini { display: none; }
 .session-list .session-row .icon-btn.mini.row-more { display: inline-flex; font-size: 14px; line-height: 1; }
 .session-list .session-row.menu-open .icon-btn.mini { display: inline-flex; }
+/* ── 需求三 UI：宽档（≥760px）抽屉"停靠并排"，不再覆盖画布 ─────────────
+   思路：面板足够宽时，把抽屉占的宽度从 .app 的右侧让出来（:has 选择器），
+   抽屉背景变透明、只有自身可点 —— 画布与输入区都保持可交互。
+   浏览器若不支持 :has()，自动退回原来的覆盖式抽屉（安全降级）。 */
+@media (min-width: 760px) {
+  .app:has(.sheet-overlay) { padding-right: 420px; }
+  .app:has(.sheet-overlay):has(.sheet-wide) { padding-right: 620px; }
+  .app:has(.sheet-overlay) .sheet-overlay {
+    background: transparent;
+    pointer-events: none;
+  }
+  .app:has(.sheet-overlay) .sheet {
+    pointer-events: auto;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, .25);
+    border-left: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3));
+  }
+}
