@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>DSH 插件面板 · UI 重构高保真设计图（v2 结构）</title>
+<style>
+  /* ── 模拟 VSCode Dark+ 主题令牌（真实插件里全部来自 var(--vscode-*)） ── */
+  :root{
+    --bg:#1e1e1e; --bg2:#252526; --bg3:#2d2d30; --fg:#cccccc; --fg2:#9d9d9d;
+    --border:#3c3c3c; --accent:#3794ff; --ok:#89d185; --warn:#cca700; --err:#f48771;
+    --hover:#2a2d2e; --code:#1b1b1b; --chip:#333336;
+    --fs-body:14px; --lh-body:22px; --fs-sec:13px; --lh-sec:20px; --fs-meta:11.5px;
+    --gap-block:12px; --gap-p:10px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#141414;color:var(--fg);
+       font:var(--fs-body)/var(--lh-body) -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{padding:24px 20px 60px}
+  h1.page{font-size:16px;line-height:24px;margin:0 0 4px;font-weight:700}
+  .page-sub{color:var(--fg2);font-size:var(--fs-meta);margin-bottom:20px}
+  .frames{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start}
+  .frame{background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative}
+  .frame-label{position:absolute;top:-11px;left:12px;background:#141414;color:var(--fg2);
+               font-size:11.5px;padding:0 6px;z-index:5}
+  .mock{display:flex;flex-direction:column;height:640px}
+  .mock.tall{height:700px}
+
+  /* ── 头部：唯一常驻行 ── */
+  .hdr{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;
+       border-bottom:1px solid var(--border);background:var(--bg2);flex:none}
+  .conn{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+  .title{display:flex;align-items:center;gap:5px;background:none;border:0;color:var(--fg);
+         font:600 var(--fs-sec)/1.2 inherit;cursor:pointer;padding:2px 4px;border-radius:4px;max-width:34%}
+  .title:hover{background:var(--hover)}
+  .title .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chev{color:var(--fg2);font-size:10px;flex:none}
+  .capsule{display:flex;align-items:center;gap:8px;margin-left:6px;padding:1px 8px;border-radius:999px;
+           background:var(--chip);color:var(--fg);font-size:var(--fs-meta);cursor:pointer;white-space:nowrap}
+  .capsule:hover{outline:1px solid var(--accent)}
+  .capsule .g{color:var(--accent)}
+  .capsule .p{color:var(--warn)}
+  .capsule .c{color:var(--fg2)}
+  .hdr .spacer{flex:1}
+  .ibtn{width:24px;height:24px;border-radius:4px;border:0;background:none;color:var(--fg2);
+        font-size:14px;cursor:pointer;display:grid;place-items:center}
+  .ibtn:hover{background:var(--hover);color:var(--fg)}
+
+  /* ── 主体：画布 + 抽屉 ── */
+  .main{flex:1;display:flex;min-height:0}
+  .canvas{flex:1;overflow:hidden;padding:14px 16px 8px;display:flex;flex-direction:column;gap:14px}
+  .canvas.solo{flex:1}
+  /* 用户消息：右对齐 76%，不再有 role 行 */
+  .row-user{display:flex;justify-content:flex-end}
+  .bubble{max-width:76%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;
+          padding:8px 12px;font-size:13.5px;line-height:20px}
+  /* 助手：左竖线区分身份，无气泡、无 role 行 */
+  .assistant{border-left:2px solid #3a3a3a;padding-left:12px}
+  .assistant h3{font-size:14.5px;line-height:22px;margin:12px 0 6px;font-weight:700}
+  .assistant h3:first-child{margin-top:0}
+  .assistant p{margin:0 0 var(--gap-p)}
+  .assistant ul{margin:0 0 var(--gap-p);padding-left:18px}
+  .assistant li{margin:4px 0}
+  .assistant table{border-collapse:collapse;width:100%;font-size:12.5px;line-height:20px;margin:0 0 var(--gap-p)}
+  .assistant th{text-align:left;font-size:11.5px;font-weight:400;color:var(--fg2);
+                background:var(--bg3);padding:4px 8px;border-bottom:1px solid var(--border)}
+  .assistant td{padding:4px 8px;border-bottom:1px solid #2f2f2f}
+  .assistant td:first-child{white-space:nowrap}
+  .assistant blockquote{margin:0 0 var(--gap-p);padding:6px 10px;border-left:2px solid var(--accent);
+                        background:rgba(55,148,255,.07);color:var(--fg)}
+  .code{margin:0 0 var(--gap-p);background:var(--code);border:1px solid var(--border);border-radius:6px;
+        position:relative;font:12.5px/20px "Cascadia Code",Consolas,monospace;padding:8px 10px;white-space:pre;overflow:hidden}
+  .code .lang{position:absolute;top:2px;right:8px;font-size:11.5px;color:var(--fg2);font-family:inherit}
+  /* 折叠单行：工具组 / 产出 —— "密"的主因处置 */
+  .fold{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--fg2);
+        padding:2px 6px;border-radius:4px;cursor:pointer;width:fit-content}
+  .fold:hover{background:var(--hover);color:var(--fg)}
+  .fold .tri{font-size:9px}
+  .fold .nm{color:var(--fg)}
+  .turnsep{display:flex;align-items:center;gap:8px;color:var(--fg2);font-size:var(--fs-meta);margin:2px 0}
+  .turnsep:before,.turnsep:after{content:"";flex:1;height:1px;background:var(--border)}
+
+  /* ── 抽屉（一个容器，多域 tab） ── */
+  .drawer{width:300px;border-left:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;flex:none}
+  .tabs{display:flex;gap:2px;padding:6px 6px 0;border-bottom:1px solid var(--border)}
+  .tab{padding:4px 10px;font-size:12px;color:var(--fg2);border-radius:5px 5px 0 0;cursor:pointer}
+  .tab.on{background:var(--bg);color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
+  .tabbody{padding:8px;overflow:hidden;flex:1}
+  .search{margin-bottom:8px}
+  .search input{width:100%;background:#3c3c3c;border:1px solid transparent;border-radius:4px;
+                color:var(--fg);font:inherit;font-size:12px;padding:3px 8px}
+  .chips{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
+  .chip{font-size:11.5px;padding:1px 8px;border-radius:999px;background:var(--chip);color:var(--fg2);cursor:pointer}
+  .chip.on{background:var(--accent);color:#fff}
+  .group{font-size:11.5px;color:var(--fg2);padding:6px 2px 3px;display:flex;gap:4px}
+  .srow{display:flex;align-items:center;gap:6px;height:26px;padding:0 6px;border-radius:5px;font-size:var(--fs-sec)}
+  .srow:hover{background:var(--hover)}
+  .srow.cur{background:#37373d}
+  .srow .dot{width:6px;height:6px;border-radius:50%;background:#6a6a6a;flex:none}
+  .srow .dot.run{background:var(--ok);box-shadow:0 0 0 3px rgba(137,209,133,.15)}
+  .srow .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow .when{color:var(--fg2);font-size:11.5px;flex:none}
+  .srow .more{opacity:0;color:var(--fg2);font-size:13px}
+  .srow:hover .more{opacity:1}
+  .pin{color:var(--accent);font-size:11px}
+
+  /* ── 待发条（仅当有待发） ── */
+  .pending{display:flex;align-items:center;gap:8px;padding:5px 12px;background:rgba(204,167,0,.10);
+           border-top:1px solid var(--border);font-size:var(--fs-meta);color:var(--fg);flex:none}
+  .pending .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pending .act{color:var(--accent);cursor:pointer;white-space:nowrap}
+
+  /* ── 输入区 ── */
+  .composer{border-top:1px solid var(--border);background:var(--bg2);padding:8px 10px 10px;flex:none}
+  .input{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;
+         color:var(--fg2);font-size:13.5px;min-height:48px}
+  .crow{display:flex;align-items:center;gap:6px;margin-top:8px}
+  .crow .spacer{flex:1}
+  .pill{display:flex;align-items:center;gap:4px;font-size:11.5px;padding:2px 8px;border-radius:999px;
+        background:var(--chip);color:var(--fg);cursor:pointer;white-space:nowrap}
+  .send{background:var(--accent);color:#fff;border:0;border-radius:6px;width:28px;height:28px;
+        font-size:14px;cursor:pointer}
+
+  /* ── 窄档 ── */
+  .narrow .capsule{padding:1px 6px;gap:5px}
+  .narrow .canvas{padding:12px 12px 6px}
+  .narrow .composer .input{min-height:40px}
+
+  /* ── 排版特写标注 ── */
+  .spec{padding:16px}
+  .spec .anno{position:relative;border-left:2px solid var(--accent);padding-left:10px;margin:0 0 14px;
+              color:var(--fg2);font-size:11.5px}
+  .spec .anno b{color:var(--fg);font-weight:600}
+  .legend{color:var(--fg2);font-size:11.5px;margin-top:10px;line-height:1.7}
+  .kbd{background:var(--chip);border-radius:3px;padding:0 4px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="page">DSH 插件面板 · UI 重构高保真设计图（结构 v2）</h1>
+  <div class="page-sub">模拟 VSCode Dark+ 主题 · 字号/行高/间距按桌面版本体实测令牌 · 三屏：宽档（抽屉停靠）/ 窄档 / 输出区排版特写</div>
+
+  <div class="frames">
+    <!-- ═══════════ 屏 1：宽档 ═══════════ -->
+    <div class="frame" style="width:840px">
+      <div class="frame-label">① 宽档 · 面板 ≥760px（1/3 屏常见）· 头部一行 + 抽屉停靠</div>
+      <div class="mock">
+        <!-- 头部一行 -->
+        <div class="hdr">
+          <span class="conn" title="已连接"></span>
+          <button class="title"><span class="tt">需求三批 UI 重构方案讨论</span><span class="chev">⌄</span></button>
+          <span class="capsule" title="点击展开详情（浮层，不挤压画布）">
+            <span class="g">◎ 目标</span><span class="c">·</span><span class="p">2 待发</span><span class="c">·</span><span class="c">62% 上下文</span>
+          </span>
+          <span class="spacer"></span>
+          <button class="ibtn" title="搜索会话（跨工作区）">⌕</button>
+          <button class="ibtn" title="更多：会话 / 运行 / 设置 / 帮助">⋯</button>
+        </div>
+
+        <div class="main">
+          <!-- 画布 -->
+          <div class="canvas">
+            <div class="row-user"><div class="bubble">1/3 屏宽，最高频就是发消息、切会话、看你在干什么</div></div>
+
+            <div class="assistant">
+              <h3>结构定稿要点</h3>
+              <p>纵向空间只给主任务；管理动作收进一个抽屉按域分 tab。</p>
+              <ul>
+                <li>头部压到一行，8 个图标进 <span class="kbd">⋯</span></li>
+                <li>goal / 待发 / 上下文 / 统计合成一条胶囊</li>
+              </ul>
+              <table>
+                <thead><tr><th>区域</th><th>常驻高度</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr><td>头部</td><td>32px</td><td>标题 + 胶囊 + ⋯</td></tr>
+                  <tr><td>待发条</td><td>0 / 26px</td><td>仅当有待发消息</td></tr>
+                </tbody>
+              </table>
+              <blockquote>可读性来自层级与节奏，不来自装饰。</blockquote>
+              <div class="code"><span class="lang">ts</span>function inboxItemsToQueue(items, placement) {
+  // 真实 message.id —— 服务端按它定位
+  return (items ?? []).map((it, i) =&gt;
+    ({ id: it.id ?? `${"${placement}"}-${"${i}"}`, placement, text: textOf(it) }));
+}</div>
+            </div>
+
+            <div class="fold"><span class="tri">▸</span><span class="nm">工具组</span>· 4 步 · 12.3s</div>
+            <div class="fold"><span class="tri">▸</span><span class="nm">本轮产出</span>· 3 文件</div>
+            <div class="turnsep">第 12 轮 · 3.2s</div>
+          </div>
+
+          <!-- 抽屉（停靠） -->
+          <div class="drawer">
+            <div class="tabs"><span class="tab on">会话</span><span class="tab">运行</span><span class="tab">设置</span><span class="tab">帮助</span></div>
+            <div class="tabbody">
+              <div class="search"><input placeholder="搜索会话（跨工作区）" /></div>
+              <div class="chips"><span class="chip on">全部</span><span class="chip">运行中</span><span class="chip">置顶</span><span class="chip">归档</span></div>
+              <div class="group"><span class="tri">▾</span> 📁 dsh-vscode（14）</div>
+              <div class="srow cur"><span class="dot run"></span><span class="t">需求三批 UI 重构方案讨论</span><span class="when">刚刚</span><span class="more">⋯</span></div>
+              <div class="srow"><span class="dot"></span><span class="pin">📌</span><span class="t">插件面板 UI 不好看排查</span><span class="when">2 小时</span><span class="more">⋯</span></div>
+              <div class="srow"><span class="dot"></span><span class="t">桌面版能力盘点（136 端点）</span><span class="when">昨天</span><span class="more">⋯</span></div>
+              <div class="srow"><span class="dot run"></span><span class="t">子代理链路修复验证</span><span class="when">昨天</span><span class="more">⋯</span></div>
+              <div class="group"><span class="tri">▸</span> 📁 01-Work（31）</div>
+              <div class="group"><span class="tri">▸</span> 📁 未分组（6）</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 待发条 -->
+        <div class="pending"><span>⇥</span><span class="txt">2 条待发：1) 先按 B 做，2) 顺便把会话区也重排</span><span class="act">全部插队</span></div>
+
+        <!-- 输入区 -->
+        <div class="composer">
+          <div class="input">输入消息…（Enter 发送 / Shift+Enter 换行）</div>
+          <div class="crow">
+            <span class="pill">@ 引用</span><span class="pill">+ 附件</span><span class="pill">/ 命令</span>
+            <span class="spacer"></span>
+            <span class="pill">deepseek-v4.1 · 默认</span>
+            <button class="send">↑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ 屏 2：窄档 ═══════════ -->
+    <div class="frame narrow" style="width:430px">
+      <div class="frame-label">② 窄档 &lt;520px · 只改呈现不砍功能</div>
+      <div class="mock">
+        <div class="hdr">
+          <span class="conn"></span>
+          <button class="title"><span class="tt">需求三批 UI 重构</span><span class="chev">⌄</span></button>
+          <span class="capsule"><span class="g">◎</span><span class="p">2</span><span class="c">62%</span></span>
+          <span class="spacer"></span>
+          <button class="ibtn">⋯</button>
+        </div>
+        <div class="main">
+          <div class="canvas solo">
+            <div class="row-user"><div class="bubble">窄档时胶囊缩成徽标，抽屉全屏覆盖</div></div>
+            <div class="assistant">
+              <h3>排版不变，只压容器</h3>
+              <p>正文仍是 14/22，段距 10——窄不等于挤。</p>
+              <div class="fold"><span class="tri">▸</span><span class="nm">工具组</span>· 4 步 · 12.3s</div>
+            </div>
+          </div>
+        </div>
+        <div class="pending"><span>⇥</span><span class="txt">2 条待发</span><span class="act">插队</span></div>
+        <div class="composer">
+          <div class="input">输入消息…</div>
+          <div class="crow"><span class="pill">+</span><span class="spacer"></span><button class="send">↑</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ 屏 3：输出区排版特写 ═══════════ -->
+    <div class="frame" style="width:840px">
+      <div class="frame-label">③ 输出区排版特写 · 一屏 ≥30 行正文（现约 22）</div>
+      <div class="spec">
+        <div class="anno"><b>正文</b> 14px / 行高 22px / 段距 10px（本体成对值：14→22、13→20、12→18）</div>
+        <div class="anno"><b>身份</b> 不用 role 行：用户=右对齐气泡，助手=左侧 2px 竖线（每条省一行）</div>
+        <div class="anno"><b>工具</b> 同轮连续工具合并为一个折叠单行 <b>▸ 工具组 · 4 步 · 12.3s</b>（"密"的最大来源）</div>
+        <div class="anno"><b>标题</b> 只用字号+粗体+上间距 12px，不用横线</div>
+        <div class="anno"><b>代码</b> 12.5 / 20，语言标签右上淡显，横向滚动不折行，复制按钮 hover 出现</div>
+        <div class="anno"><b>表格</b> 12.5 / 20，表头 11.5 淡背景不加粗，行间 1px 分隔线</div>
+        <div class="anno"><b>统计</b> 回合信息压成一行居中淡显：<b>—— 第 12 轮 · 3.2s ——</b></div>
+        <div class="assistant" style="margin-top:18px">
+          <h3>示例：一次真实回复的排版</h3>
+          <p>先说结论，再给分层。段落之间留 10px，读起来不糊成一块。</p>
+          <ul><li>列表项间距 4px，缩进 16px</li><li>嵌套两级后改小圆点</li></ul>
+          <table>
+            <thead><tr><th>项</th><th>现状</th><th>目标</th></tr></thead>
+            <tbody><tr><td>一屏正文行数</td><td>约 22 行</td><td>≥30 行</td></tr><tr><td>每轮工具卡</td><td>每步一张</td><td>1 个折叠组</td></tr></tbody>
+          </table>
+          <blockquote>引用与标注：左 2px 竖线 + 淡背景，不倾斜。</blockquote>
+          <div class="code"><span class="lang">bash</span>node scripts/fold-regress.cjs   # 24/24
+node scripts/pathlink-regress.cjs # 8/8</div>
+          <p>代码块与正文之间同样留 10px，避免"贴着读"。</p>
+        </div>
+        <div class="fold"><span class="tri">▸</span><span class="nm">工具组</span>· 6 步 · 41.8s（点开才展开每步）</div>
+        <div class="turnsep">第 12 轮 · 3.2s</div>
+        <div class="legend">
+          已按你的要求移除：助手消息的 👍👎、顶部 8 个常驻图标、独立占行的 GoalBar、"你/助手"role 行、部分统计行。<br>
+          保留：复制、从此处分叉（回合分隔线上）。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
