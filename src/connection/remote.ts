@@ -44,6 +44,23 @@ export interface WorkspaceBaseline {
   pinnedSessionIds?: string[];
 }
 
+/** `session/follow` / `session/page` address union (design.md §3.7). A subagent
+ *  session is reachable ONLY through its durable parent address: with a plain
+ *  session address 0.2.0 answers `session/agent-busy: subagent Sessions require
+ *  their durable parent address`. */
+export type SessionAddress =
+  | { kind: "session"; sessionId: string }
+  | {
+      kind: "subagent";
+      parentSessionId: string;
+      childSessionId: string;
+      mode: "one-shot" | "continuable" | "unknown";
+    };
+
+export function sessionAddress(subject: string | SessionAddress): SessionAddress {
+  return typeof subject === "string" ? { kind: "session", sessionId: subject } : subject;
+}
+
 export interface V012StreamsOptions {
   baseUrl: string;
   auth: Auth;
@@ -115,7 +132,7 @@ export class V012Streams {
 
   /** One-shot history tail page for `session.history` under v012. */
   snapshotOnce(
-    sessionId: string,
+    subject: string | SessionAddress,
     maxMessages: number,
     timeoutMs = 10_000,
   ): Promise<{ entries: unknown[]; hasMore: boolean; projections?: Record<string, unknown>; cursor?: number }> {
@@ -131,7 +148,7 @@ export class V012Streams {
       const timer = setTimeout(() => finish({ entries: [], hasMore: false }), timeoutMs);
       const handle = this.openStream(
         "session/follow",
-        { request: { address: { kind: "session", sessionId }, ...(maxMessages !== undefined ? { maxMessages } : {}) } },
+        { request: { address: sessionAddress(subject), ...(maxMessages !== undefined ? { maxMessages } : {}) } },
         {
           onItem: (value) => {
             const frame = value as { type?: string; records?: { event: unknown; view?: unknown }[]; hasMore?: boolean; projections?: Record<string, unknown>; cursor?: number };

@@ -51,6 +51,9 @@ export class SessionManager {
   private workspaceItems: WorkspaceView[] = [];
   private pinnedIds = new Set<string>();
   private archivedIds = new Set<string>();
+  /** child sessionId → subagent mode ("continuable"/"one-shot"/"unknown"),
+   *  from the parent's subagentCatalog; the transcript call needs it. */
+  private subagentModes = new Map<string, string>();
   private batch: { sessionId: string; frames: unknown[] } | undefined;
   private batchTimer: NodeJS.Timeout | undefined;
   private seenQuestions = new Set<string>();
@@ -735,24 +738,58 @@ export class SessionManager {
     }
   }
 
-  /** List a session's subagents (rc.2 subagent.list / 0.1.2 subagents/list). */
+  /** List a session's subagents. `subagents/list` is GONE in 0.2.0, so the
+   *  catalog comes from two live sources (design.md §3.7): the session rows
+   *  (origin/parentSessionId/running) and the parent's `subagentCatalog`
+   *  projection (authoritative mode + the dispatched task label — which
+   *  differs from the row's title, i.e. the prompt's first line). */
   async listSubagents(sessionId: string): Promise<void> {
     try {
-      const res = await this.lifecycle.client.call<{ entries: unknown[] }>("subagent.list", { parentSessionId: sessionId });
-      this.host.post({ t: "subagents", sessionId, entries: (Array.isArray(res?.entries) ? res.entries : []) as any });
+      const [list, pj] = await Promise.all([
+        this.lifecycle.client.call<{ items: SessionRow[] }>("session.list", {}),
+        this.lifecycle.client
+          .call<{ values?: { subagentCatalog?: { id: string; mode?: string; label?: string }[] } }>(
+            "session.projections",
+            { request: { sessionId } },
+          )
+          .catch(() => ({ values: undefined })),
+      ]);
+      const catalog = new Map((pj?.values?.subagentCatalog ?? []).map((c) => [String(c.id), c]));
+      this.subagentModes = new Map();
+      const entries = (list?.items ?? [])
+        .filter((r) => r.parentSessionId === sessionId)
+        .map((r) => {
+          const c = catalog.get(r.sessionId);
+          this.subagentModes.set(r.sessionId, c?.mode ?? "unknown");
+          return {
+            id: r.sessionId,
+            mode: c?.mode ?? "unknown",
+            label: c?.label ?? titleOf(r) ?? r.sessionId.slice(0, 8),
+            // The renderer keys the interrupt button off "active".
+            activity: r.running ? "active" : "idle",
+            hasChildren: false,
+          };
+        })
+        .sort((a, b) => Number(b.activity === "active") - Number(a.activity === "active"));
+      this.host.post({ t: "subagents", sessionId, entries });
     } catch (err) {
       this.host.post({ t: "notify", kind: "warn", message: `子代理列表获取失败：${errText(err)}` });
       this.host.post({ t: "subagents", sessionId, entries: [] });
     }
   }
 
-  /** Subagent transcript. Wire fact (probed on alpha.5): the gateway does
-   *  NOT expose subagent.* to client Remotes ("invalid Remote endpoint" on
-   *  the stream carrier, 404 over HTTP) — the child IS a session, so we go
-   *  through session.history (snapshot/page adapter) with the child id. */
+  /** Subagent transcript — through the SUBAGENT address (design.md §3.7).
+   *  A plain session address is rejected on 0.2.0, which is why the panel used
+   *  to show nothing for a child session. */
   async subagentHistory(childId: string): Promise<void> {
     try {
-      const h = await this.lifecycle.client.call<{ events: unknown[] }>("session.history", { sessionId: childId, maxMessages: 400 });
+      const parentSessionId = this.sessionRows.find((r) => r.sessionId === childId)?.parentSessionId;
+      const h = await this.lifecycle.client.call<{ events: unknown[] }>("session.history", {
+        sessionId: childId,
+        parentSessionId,
+        subagentMode: this.subagentModes.get(childId),
+        maxMessages: 400,
+      });
       this.host.post({ t: "subagent-history", sessionId: childId, entries: ((h?.events ?? []) as any) });
     } catch (err) {
       this.host.post({ t: "notify", kind: "warn", message: `子代理对话读取失败：${errText(err)}` });
@@ -760,14 +797,30 @@ export class SessionManager {
     }
   }
 
-  /** Steer a continuable subagent: session.prompt pointed at the child id. */
+  /** Steer a continuable subagent: dedicated endpoint on 0.2.0
+   *  (`session.prompt` pointed at a child is rejected on v012). */
   async subagentPrompt(childId: string, text: string): Promise<void> {
+    const parentSessionId =
+      this.sessionRows.find((r) => r.sessionId === childId)?.parentSessionId ?? this.currentSession;
     try {
-      await this.lifecycle.client.call("session.prompt", {
-        sessionId: childId,
-        mode: "queue",
-        content: [{ type: "text", text }],
-      });
+      if (this.lifecycle.currentFlavor === "legacy") {
+        await this.lifecycle.client.call("session.prompt", {
+          sessionId: childId,
+          mode: "queue",
+          content: [{ type: "text", text }],
+        });
+      } else {
+        await this.lifecycle.client.call("subagents.prompt", {
+          request: {
+            requestId: `subprompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+            parentSessionId,
+            childSessionId: childId,
+            mode: "continuable",
+            delivery: "queue",
+            content: [{ type: "text", text }],
+          },
+        });
+      }
       this.host.post({ t: "notify", kind: "info", message: "已发送给子代理" });
       await this.subagentHistory(childId);
     } catch (err) {
@@ -775,11 +828,22 @@ export class SessionManager {
     }
   }
 
-  /** Interrupt a running subagent: session.cancel pointed at the child id
-   *  (probe: fake id → session/not-found — schema accepted). */
+  /** Interrupt a continuable subagent. `mode` has exactly ONE legal value on
+   *  0.2.0 (`literal("continuable")` in the gateway schema) — do not invent
+   *  others; legacy has no such endpoint, so it falls back to session.cancel. */
   async subagentInterrupt(childId: string): Promise<void> {
+    const parentSessionId =
+      this.sessionRows.find((r) => r.sessionId === childId)?.parentSessionId ?? this.currentSession;
     try {
-      await this.lifecycle.client.call("session.cancel", { sessionId: childId });
+      if (this.lifecycle.currentFlavor === "legacy") {
+        await this.lifecycle.client.call("session.cancel", { sessionId: childId });
+      } else {
+        await this.lifecycle.client.call("subagents.interruptByParent", {
+          childSessionId: childId,
+          parentSessionId,
+          mode: "continuable",
+        });
+      }
       this.host.post({ t: "notify", kind: "info", message: "已请求打断子代理" });
       await this.subagentHistory(childId);
     } catch (err) {

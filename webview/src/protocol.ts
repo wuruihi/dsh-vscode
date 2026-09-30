@@ -140,7 +140,7 @@ export type ExtToView =
   | { t: "slash"; reqId: number; items: { kind: "skill" | "command"; name: string; description: string }[] }
   | { t: "picked"; reqId: number; items: { path: string; rel: string }[] }
   | { t: "jobs"; sessionId: string; jobs: { id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[] }
-  | { t: "subagents"; sessionId: string; entries: { kind: string; id: string; mode: string; label: string; activity: string; hasChildren: boolean }[] }
+  | { t: "subagents"; sessionId: string; entries: { id: string; mode: string; label: string; activity: string; hasChildren: boolean }[] }
   | { t: "subagent-history"; sessionId: string; entries: unknown[] }
   /** settings/describe result (schema-driven server settings form). */
   | { t: "settings-describe"; data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } }

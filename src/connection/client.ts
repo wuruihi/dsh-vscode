@@ -16,9 +16,28 @@
  * `call()` — this class is the single translation point.
  */
 import type { Auth } from "./auth.js";
-import type { V012Streams } from "./remote.js";
+import type { SessionAddress, V012Streams } from "./remote.js";
 import { makeRpcId, type Flavor } from "./protocol.js";
 import { warn } from "../log.js";
+
+/** History address for a session OR a subagent child (design.md §3.7): the
+ *  0.2.0 gateway refuses a plain session address on `origin:"subagent"`
+ *  sessions (`session/agent-busy: subagent Sessions require their durable
+ *  parent address`), so the parent's identity has to travel with the call. */
+function historyAddressOf(payload: {
+  sessionId: string;
+  parentSessionId?: string;
+  subagentMode?: string;
+}): SessionAddress {
+  if (!payload.parentSessionId) return { kind: "session", sessionId: payload.sessionId };
+  const mode = payload.subagentMode;
+  return {
+    kind: "subagent",
+    parentSessionId: payload.parentSessionId,
+    childSessionId: payload.sessionId,
+    mode: mode === "one-shot" || mode === "continuable" ? mode : "unknown",
+  };
+}
 
 export class DshRpcError extends Error {
   constructor(
@@ -267,6 +286,8 @@ export class RpcClient {
       "session.updateQueue",
       "session.selectModel",
       "workspace.create",
+      "subagents.prompt", // {request:{requestId,parentSessionId,childSessionId,mode,delivery,content}} (0.2.0)
+      "job.kill", // {request:{jobId,sessionId?}}
     ]);
     if (wrapped.has(method)) {
       const endpoint = METHOD_MAP[method] ?? method.replace(/\./g, "/");
@@ -302,12 +323,21 @@ export class RpcClient {
    *  one-shot session/follow snapshot (which also yields the paging cursor),
    *  older pages from session/page. */
   private async v012History<T>(
-    payload: { sessionId: string; maxMessages?: number; beforeSeq?: number },
+    payload: {
+      sessionId: string;
+      maxMessages?: number;
+      beforeSeq?: number;
+      /** Set for subagent transcripts: 0.2.0 rejects a plain session address on
+       *  a child session (design.md §3.7). */
+      parentSessionId?: string;
+      subagentMode?: string;
+    },
     timeoutMs: number,
   ): Promise<T> {
     if (!this.v012) throw new DshNetworkError("session.history before v012 streams bound");
+    const address = historyAddressOf(payload);
     if (payload?.beforeSeq === undefined) {
-      const snap = await this.v012.snapshotOnce(payload.sessionId, payload.maxMessages ?? 24, timeoutMs);
+      const snap = await this.v012.snapshotOnce(address, payload.maxMessages ?? 24, timeoutMs);
       if (snap.cursor !== undefined) this.historyCursor.set(payload.sessionId, snap.cursor);
       return {
         events: snap.entries,
@@ -320,7 +350,7 @@ export class RpcClient {
       "session/page",
       {
         request: {
-          address: { kind: "session", sessionId: payload.sessionId },
+          address,
           throughSeq,
           ...(payload.beforeSeq !== undefined ? { beforeSeq: payload.beforeSeq } : {}),
           ...(payload.maxMessages !== undefined ? { maxMessages: payload.maxMessages } : {}),
