@@ -1,26 +1,55 @@
 import * as vscode from "vscode";
-import { DshLifecycle } from "./connection/lifecycle.js";
+import { DshLifecycle, type ConnState } from "./connection/lifecycle.js";
+import {
+  DEFAULT_BASE_URL,
+  DESKTOP_APP_PORT,
+  LOCAL_WEB_PORT,
+  candidateInstances,
+  describeInstance,
+  desktopAppExeResolved,
+  resolveInstance,
+  type DshInstance,
+} from "./connection/instances.js";
 import { SessionManager } from "./session/manager.js";
 import { DshChatView } from "./ui/panel.js";
 import { DiffService } from "./diff/provider.js";
 import { IdeBridge } from "./ide/bridge.js";
 import { searchWorkspaceFiles } from "./context/files.js";
-import { getLog, log } from "./log.js";
+import { getLog, log, warn } from "./log.js";
 import type { ViewToExt } from "../webview/src/protocol.js";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const cfg = vscode.workspace.getConfiguration("dsh-vscode");
-  const baseUrl = cfg.get<string>("baseUrl", "http://127.0.0.1:3080");
-
-  const lifecycle = new DshLifecycle(baseUrl);
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
   const panel = new DshChatView(context);
-  const manager = new SessionManager(lifecycle, { post: (m) => panel.post(m) }, context.globalState, context.workspaceState);
   const diff = new DiffService();
-  manager.bindDiff(diff);
   const ideBridge = new IdeBridge();
   ideBridge.start(String(context.extension.packageJSON.version ?? ""));
 
-  context.subscriptions.push(lifecycle, panel, diff, ideBridge);
+  // ---- instance generation -------------------------------------------------
+  // DshLifecycle / RpcClient / Auth all fix baseUrl at construction and keep
+  // instance-scoped caches (auth cookie per authority, history cursor, seen
+  // approval cards). Switching instances therefore REBUILDS this trio instead of
+  // patching baseUrl in place (design.md §3.5).
+  let lifecycle!: DshLifecycle;
+  let manager!: SessionManager;
+  let currentInstance: DshInstance | undefined;
+  let baseUrl = DEFAULT_BASE_URL;
+  /** User explicitly pinned dsh-vscode.baseUrl → never second-guess it. */
+  let pinned = false;
+  let instanceSubs: vscode.Disposable[] = [];
+  /** While a server is being started/opened, suppress the "no instance" offer
+   *  (its own probe fails by definition, which would re-prompt in a loop). */
+  let offerSuppressedUntil = 0;
+  let reconnectSeq = 0;
+
+  context.subscriptions.push(panel, diff, ideBridge);
+  context.subscriptions.push({
+    dispose: () => {
+      for (const d of instanceSubs) d.dispose();
+      instanceSubs = [];
+      lifecycle?.dispose();
+    },
+  });
 
   // Webview provider registration.
   context.subscriptions.push(
@@ -38,25 +67,158 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     disconnected: "$(circle-slash) DSH",
     starting: "$(play) DSH",
   };
-  const statusTooltip: Record<string, string> = {
-    connecting: "DSH: connecting…",
-    connected: `DSH: connected (${baseUrl})`,
-    disconnected: "DSH: disconnected — click to open chat and retry",
-    starting: "DSH: starting dsh web…",
-  };
-  lifecycle.events.onState((s) => {
-    status.text = statusText[s] ?? "$(circle-slash) DSH";
-    status.tooltip = statusTooltip[s] ?? s;
-  });
-  panel.post({ t: "conn", state: "connecting" });
-  lifecycle.events.onState((s) => panel.post({ t: "conn", state: s, baseUrl }));
-  // Connection problems that need the user's eyes (v012 auth, unknown protocol).
-  lifecycle.events.onProblem((message) => {
-    panel.post({ t: "notify", kind: "warn", message });
-    void vscode.window.showWarningMessage(message);
-  });
-  status.text = statusText.connecting;
-  status.show();
+  /** The status bar must always answer "which DSH am I talking to?" — including
+   *  the profile's permission preset, because attaching to the desktop profile
+   *  (danger-full-access) means approval cards never appear. */
+  function tooltipFor(state: ConnState): string {
+    const where = currentInstance ? describeInstance(currentInstance) : baseUrl;
+    const head =
+      state === "connected"
+        ? `connected — ${where}`
+        : state === "starting"
+          ? `starting… (${where})`
+          : state === "connecting"
+            ? `connecting… (${where})`
+            : `disconnected — ${where}（点这里打开面板，或运行 “DSH: Select DSH Instance”）`;
+    const preset = currentInstance?.permissionPreset;
+    const note = preset && /danger|full-access/i.test(preset) ? `\n注意：当前实例权限预设为 ${preset}，从插件发起的命令不会弹审批卡。` : "";
+    return `DSH: ${head}${note}`;
+  }
+
+  function wireInstance(instance: DshInstance): void {
+    for (const d of instanceSubs) d.dispose();
+    instanceSubs = [];
+    try {
+      lifecycle?.dispose();
+    } catch {
+      /* first generation */
+    }
+    currentInstance = instance;
+    baseUrl = instance.baseUrl;
+    const generation = new DshLifecycle(baseUrl);
+    lifecycle = generation;
+    manager = new SessionManager(generation, { post: (m) => panel.post(m) }, context.globalState, context.workspaceState);
+    manager.bindDiff(diff);
+
+    const ev = generation.events;
+    instanceSubs.push(
+      ev.onState((s: ConnState) => {
+        status.text = statusText[s] ?? "$(circle-slash) DSH";
+        status.tooltip = tooltipFor(s);
+        panel.post({ t: "conn", state: s, baseUrl });
+      }),
+      // Connection problems that need the user's eyes (v012 auth, unknown protocol).
+      ev.onProblem((message: string) => {
+        panel.post({ t: "notify", kind: "warn", message });
+        void vscode.window.showWarningMessage(message);
+      }),
+      ev.onNeedsInstance(() => {
+        if (Date.now() < offerSuppressedUntil) return;
+        void offerInstance();
+      }),
+    );
+    status.text = statusText.connecting;
+    status.tooltip = tooltipFor("connecting");
+    status.show();
+    panel.post({ t: "conn", state: "connecting" });
+    log(
+      `[extension] instance: ${instance.label} → ${instance.baseUrl} ` +
+        `(profile ${instance.profile ?? "?"}, ${instance.running ? "running" : "down"})`,
+    );
+    void generation.init();
+  }
+
+  /** Nothing answered: offer the preferred fallback (open the desktop App) and
+   *  keep "start a legacy local server" available but clearly secondary. */
+  async function offerInstance(): Promise<void> {
+    if (pinned) {
+      const pick = await vscode.window.showWarningMessage(`DSH: 自定义地址 ${baseUrl} 没有响应。`, "重试", "选择实例…");
+      if (pick === "重试") void lifecycle.init();
+      else if (pick === "选择实例…") void pickInstance();
+      return;
+    }
+    const appPath = await desktopAppExeResolved();
+    if (!vscode.workspace.getConfiguration("dsh-vscode").get<boolean>("autoStart", true)) {
+      status.tooltip = tooltipFor("disconnected");
+      return;
+    }
+    const buttons = [...(appPath ? ["打开桌面版"] : []), "选择实例…", "启动本地 dsh web（旧版）"];
+    const pick = await vscode.window.showWarningMessage(
+      `DSH: 没有检测到运行中的实例（桌面版 ${DESKTOP_APP_PORT} 与旧版 ${LOCAL_WEB_PORT} 都没有响应）。` +
+        (appPath ? "可以打开桌面版 App —— 功能最全，且与 GUI 共享会话。" : ""),
+      ...buttons,
+    );
+    if (pick === "打开桌面版" && appPath) {
+      offerSuppressedUntil = Date.now() + 90_000;
+      const ok = await lifecycle.launchDesktopApp(appPath);
+      if (!ok) void vscode.window.showErrorMessage("DSH: 桌面版没有在本地址就绪，可查看日志或用 “DSH: Select DSH Instance”。");
+      return;
+    }
+    if (pick === "选择实例…") {
+      void pickInstance();
+      return;
+    }
+    if (pick === "启动本地 dsh web（旧版）") {
+      // Retarget to 3080 FIRST: startDsh() starts whatever port THIS lifecycle
+      // points at, and the default generation points at the desktop 19387.
+      const legacy = candidateInstances(appPath).find((c) => c.kind === "local-web");
+      offerSuppressedUntil = Date.now() + 130_000; // the readiness poll window
+      if (legacy) wireInstance(legacy);
+      await lifecycle.startDsh();
+    }
+  }
+
+  /** Quick pick of every known instance (live state probed now) + auto mode. */
+  async function pickInstance(): Promise<void> {
+    const appPath = await desktopAppExeResolved();
+    const resolution = await resolveInstance({ home, explicitBaseUrl: "", appExe: () => appPath });
+    type Item = vscode.QuickPickItem & { auto?: boolean; instance?: DshInstance };
+    const items: Item[] = [
+      {
+        label: "$(sync) 自动选择",
+        description: `优先桌面版 ${DESKTOP_APP_PORT}，其次旧版 ${LOCAL_WEB_PORT}`,
+        detail: "未手动指定 baseUrl 时生效（推荐）",
+        auto: true,
+      },
+      ...resolution.candidates.map((c) => ({
+        label: `${c.running ? "$(pass-filled)" : "$(circle-slash)"} ${c.label}`,
+        description: describeInstance(c),
+        detail: c.running ? "运行中" : c.kind === "desktop-app" ? "未运行 —— 选中后可打开桌面版 App" : "未运行",
+        instance: c,
+      })),
+    ];
+    const pick = await vscode.window.showQuickPick(items, {
+      title: "DSH: 选择要连接的实例（自动选择会写回默认 baseUrl）",
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+    if (!pick) return;
+    const target = pick.auto ? undefined : pick.instance?.baseUrl;
+    const cfg = vscode.workspace.getConfiguration("dsh-vscode");
+    const before = cfg.inspect<string>("baseUrl")?.globalValue ?? DEFAULT_BASE_URL;
+    await cfg.update("baseUrl", target, vscode.ConfigurationTarget.Global);
+    // No config event fires when the value did not actually change — reconnect here.
+    if ((target ?? DEFAULT_BASE_URL) === before) void reconnect();
+  }
+
+  /** Resolve the instance (explicit baseUrl wins, else probe desktop → legacy)
+   *  and rebuild the generation against it. */
+  async function reconnect(): Promise<void> {
+    const seq = ++reconnectSeq;
+    const explicit = vscode.workspace.getConfiguration("dsh-vscode").get<string>("baseUrl", DEFAULT_BASE_URL);
+    const resolution = await resolveInstance({ home, explicitBaseUrl: explicit });
+    if (seq !== reconnectSeq) return; // superseded by a newer request
+    pinned = resolution.pinned;
+    const target = resolution.instance ?? resolution.candidates[0];
+    if (!target) {
+      warn("[extension] no candidates at all — cannot connect");
+      return;
+    }
+    if (!resolution.instance) {
+      log(`[extension] nothing running; falling back to ${target.label} (${target.baseUrl})`);
+    }
+    wireInstance(target);
+  }
 
   // Wire webview -> manager.
   panel.onMessage(async (m: ViewToExt) => {
@@ -217,6 +379,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void diff.openTurnSummary();
     }),
     vscode.commands.registerCommand("dsh-vscode.showLogs", () => getLog().show()),
+    // Which DSH are we talking to? (desktop App on 19387 / legacy CLI on 3080)
+    vscode.commands.registerCommand("dsh-vscode.selectInstance", () => void pickInstance()),
     // Proactive half of the auto-start path fix (0.18.5): pick node.exe / the dsh
     // CLI by hand without waiting for a failed start. Empty settings = auto-detect.
     vscode.commands.registerCommand("dsh-vscode.locateDsh", async () => {
@@ -227,10 +391,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const pick = await vscode.window.showQuickPick(items, { title: "DSH: 手动指定路径（设置留空则自动探测）" });
       if (pick) await lifecycle.pickExe(pick.target);
     }),
+    // Instance switching is stored in dsh-vscode.baseUrl: every VSCode window
+    // gets this event, so all windows converge on one instance (and Auth is keyed
+    // by authority, so a switch cannot leak the previous cookie).
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("dsh-vscode.baseUrl")) return;
+      setTimeout(() => void reconnect(), 250);
+    }),
   ];
   context.subscriptions.push(...subs);
 
-  await lifecycle.init();
+  await reconnect();
 }
 
 export function deactivate(): void {

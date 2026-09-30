@@ -38,6 +38,8 @@ interface StreamCallbacks {
 export interface V012StreamsOptions {
   baseUrl: string;
   auth: Auth;
+  /** $HOME-ish root: needed to re-mint a cookie when the WS handshake 401s. */
+  home: string;
   onReady: (generation: number) => void;
   onBroken: (generation: number) => void;
   onMux: (frame: { rpcId: string; payload: any }) => void;
@@ -198,7 +200,7 @@ export class V012Streams {
     log(`[v012] connecting generation ${gen}: ${url}`);
     let ws: WebSocket;
     try {
-      ws = new WebSocket(url, { handshakeTimeout: 8000, headers: this.opts.auth.cookieHeader() });
+      ws = new WebSocket(url, { handshakeTimeout: 8000, headers: this.opts.auth.cookieHeader(this.opts.baseUrl) });
     } catch (err) {
       warn(`[v012] socket create failed: ${String(err)}`);
       this.scheduleReconnect();
@@ -236,6 +238,23 @@ export class V012Streams {
     ws.on("error", (err) => {
       if (gen !== this.gen || this.ws !== ws) return;
       warn(`[v012] socket error: ${err.message}`);
+      this.scheduleReconnect();
+    });
+    // Handshake rejection (401/403): the cookie is missing, expired, or minted
+    // for ANOTHER authority (the cookie name embeds the authority hash). The
+    // handshake reads the cookie once per socket, so without re-minting here the
+    // stream would loop on 401 forever after an instance switch (design.md §3.5).
+    ws.on("unexpected-response", (_req, res) => {
+      if (gen !== this.gen || this.ws !== ws) return;
+      const status = res.statusCode ?? 0;
+      warn(`[v012] mux handshake rejected: HTTP ${status}`);
+      res.resume();
+      if (status === 401 || status === 403) {
+        this.opts.auth.invalidate(this.opts.baseUrl);
+        void this.opts.auth.ensureCookie(this.opts.baseUrl, this.opts.home).then((ok) => {
+          if (ok) warn("[v012] cookie re-minted after WS handshake 401");
+        });
+      }
       this.scheduleReconnect();
     });
   }

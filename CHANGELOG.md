@@ -4,6 +4,18 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.19.0 — 实例选择：插件可直接附身**桌面版 App**（19387），并在两个 DSH 之间切换
+
+- **背景（本机实测）**：桌面版 Electron App（0.2.0-rc.2，自动更新）与旧 CLI（`C:\Users\wurui\dsh`，0.1.5-rc.1）**共存且共用 `~/.dsh` 存储**（会话/凭证/存储不分 profile，`profiles/<名>/` 只放 cordis + node_modules）。旧 CLI **读不了新会话**：盘上 79 个 `session.v3` + 9 个 `session.v4`，v3→v4 的 codec 只存在于 0.2.0 包内。所以"切到桌面版"是必需项，不是可选优化。
+- **连接路线修订**（`docs/design.md` §3.5）：**附身运行中的实例**，候选固定两个——桌面版 App `127.0.0.1:19387`（**端口是硬编码常量**，无回退，起不来即失败）与旧 CLI `dsh web` `3080`。默认先探 19387、再 3080；`dsh-vscode.baseUrl` **显式设置永远最高优先**（探测/切换都不覆盖它）；两者都在时状态栏显示实例身份（进程名 + profile + 权限预设），命令面板 `DSH: Select DSH Instance` 可切换，切换即重建 lifecycle + manager（`Auth` 按 authority 键控，切换作废旧 cookie 并重铸）。
+- **兜底策略**：都没起 → 提示条给「打开桌面版 App」（本机已装，`%LOCALAPPDATA%\Programs\…`，注册表 InstallLocation 兜底）/「选择实例…」/「启动本地 dsh web（旧版）」三项，**不 spawn 第二写者**。红线：**绝不用桌面版 CLI 起 `web` profile**——其 bundled pnpm + 0.2.0 installAnchor 会把 `~/.dsh/profiles/node_modules`（现为 0.1.5 树）重装，永久破坏旧 CLI。
+- **协议适配（0.2.0）**：`subagents/list` 已被移除（0.2.0 只剩 `subagents/prompt` / `subagents/interruptByParent`，无别名）→ 首次失败即 warn 一次并停止调用，子代理树改由 `session/list` 的 `origin`/`parentSessionId` 派生，会话树不受影响；mux 握手收到 401/403 → 作废该 authority 的 cookie 并重铸后重连（原先只在启动时铸一次，7 天过期即整条链路静默死）。
+- **顺带修正两处会掩盖问题的工具链缺陷**：① `scripts/args-audit.mjs` 定位不到 DSH 时**静默 `SKIP` + exit 0**——普通 node 在 `app.asar` 上 `existsSync` 恒为 false，于是"审桌面版"看起来是绿的、其实一个端点都没审；现改为**硬失败 exit 2** 并打印 Electron-as-node 配方，另加 `--allow-missing` 显式跳过。② 覆盖范围从"只扫 `client.ts` 的 `v012Request`"扩到 **`remote.ts` 的 6 个流开帧**（`openStream`）与 **`client.ts` 的 9 个 `{request}` 包裹方法**（原为覆盖盲区）。③ 新增 `HANDLED_DRIFT` 白名单，只收"网关没有但代码已显式降级"的端点（当前仅 `subagents/list`），条目必须注明运行期降级位置。
+- **0.2.0 协议实测事实（连 19387 跑 4 次真实回合，含工具步与 692 字长回答）**：live 通道**不再发 `assistant/chunk`**（该名称只剩历史格式迁移代码引用），改发 `assistant/message`——**每步一条完整消息**，簇内 `data.stream[]` 带完整时间线（含 `dt`）。`webview/src/fold.ts` 两代都认（`assistant/message` 分支原为历史回放而写），故正文照常显示；**代价是没有逐字打字机效果**（整条出现）。另：`session/page` 现**强制 `throughSeq`**（缺了报 `boundary validation`；插件 `historyCursor` 本来就传，勿删）；`workspace/archiveSession` 仍 `{request:{sessionId}}`。
+- **`scripts/smoke.mjs` 判据修正**：v012 链原先只认 `assistant/chunk`，在 0.2.0 上必然假报 FAIL（v0.18.5 把该 FAIL 归因为"宿主侧环境"就是判据太窄）→ 改为两代通吃（chunk `text-delta` **或** `assistant/message` 正文），并把命中路径打进详情。
+- **验证**：`pnpm compile` 双 tsconfig exit 0；`pnpm build` exit 0；`regress:locate` **26/26**；`args:audit` 对旧 CLI **0 处不匹配**、对桌面版 asar（Electron 当 node）**0 处不匹配**（136 个描述符 × 26 个比对点，`subagents/list` 走 HANDLED）；**`smoke --base-url http://127.0.0.1:19387 --from-credentials` 13/13**（真实回合取回正文 `"收到\n\n以上"`，`via assistant/message（整条）`）。本轮验证造的 8 个测试会话已全部 `archiveSession`（进 workspace.json 归档集合）+ 删文件，磁盘 0 残留；临时探针脚本已删。
+- **待用户手测**：装本地 vsix → ①面板连接桌面版 + 发一条消息 + 看一次 diff；②双实例切换（终端起旧版 3080 后点状态栏切换）；③App 未运行时的"打开桌面版 App"兜底。
+
 ## v0.18.5 — 一键拉起修复：拉起路径改为「显式配置优先 + 自动探测」（原默认值是某台机器的专属路径）
 
 - **现象**（用户报）：面板提示拉起后一直等到超时报 `dsh web did not become ready in 120s`；`~/.dsh/dsh-vscode-web.err.log` 里其实是 `Cannot find module 'C:\Users\wurui\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js'`。实际长期靠桌面快捷方式启动。

@@ -14,6 +14,7 @@ import { EventStreams } from "./events.js";
 import { V012Streams } from "./remote.js";
 import { Auth } from "./auth.js";
 import { detectFlavor, type Flavor } from "./protocol.js";
+import { openDesktopApp } from "./instances.js";
 import {
   isDir,
   locateDshBin,
@@ -35,6 +36,9 @@ export interface DshServiceEvents {
   onHost: vscode.Event<{ rpcId: string; payload: any }>;
   /** Human-facing connection problem (auth missing / protocol unknown). */
   onProblem: vscode.Event<string>;
+  /** Nothing answered at this address: the caller decides what to do (pick
+   *  another resolved instance, offer to open the desktop App, or start one). */
+  onNeedsInstance: vscode.Event<void>;
 }
 
 interface DshStreams {
@@ -52,6 +56,7 @@ export class DshLifecycle {
   private readonly muxEmitter = new vscode.EventEmitter<{ rpcId: string; payload: any }>();
   private readonly hostEmitter = new vscode.EventEmitter<{ rpcId: string; payload: any }>();
   private readonly problemEmitter = new vscode.EventEmitter<string>();
+  private readonly needsInstanceEmitter = new vscode.EventEmitter<void>();
   private probeTimer: NodeJS.Timeout | undefined;
 
   private streams: DshStreams | undefined;
@@ -76,6 +81,7 @@ export class DshLifecycle {
       onMux: this.muxEmitter.event,
       onHost: this.hostEmitter.event,
       onProblem: this.problemEmitter.event,
+      onNeedsInstance: this.needsInstanceEmitter.event,
     };
   }
 
@@ -106,13 +112,14 @@ export class DshLifecycle {
       this.streams?.start();
       return;
     }
-    const cfg = vscode.workspace.getConfiguration("dsh-vscode");
-    if (cfg.get<boolean>("autoStart", true)) {
-      await this.startDsh();
-    } else {
-      this.setState("disconnected");
-      this.keepDetecting();
-    }
+    // Nothing at THIS address. Deliberately do NOT start a server here: another
+    // instance may be live elsewhere, and starting one next to the desktop App
+    // means two agent loops writing the same ~/.dsh session store. The caller
+    // (extension.ts) resolves the instance first and asks the user when nothing
+    // is running at all (design.md §3.5).
+    this.setState("disconnected");
+    this.needsInstanceEmitter.fire();
+    this.keepDetecting();
   }
 
   /** Bind the flavor: route the client, build the matching stream layer. */
@@ -152,7 +159,7 @@ export class DshLifecycle {
     if (flavor === "legacy") {
       return new EventStreams({ baseUrl: this.baseUrl, onReady, onBroken, onMux, onHost });
     }
-    const v012 = new V012Streams({ baseUrl: this.baseUrl, auth: this.auth, onReady, onBroken, onMux, onHost });
+    const v012 = new V012Streams({ baseUrl: this.baseUrl, auth: this.auth, home: this.home, onReady, onBroken, onMux, onHost });
     this.client.bindV012(v012);
     return v012;
   }
@@ -202,10 +209,50 @@ export class DshLifecycle {
     return detected !== undefined;
   }
 
+  /** Preferred fallback when nothing is running: open the desktop App and
+   *  attach to it — full feature set (base+web-app+agent-team+auto-review+
+   *  schedule+memory-loader), no second writer, and it keeps auto-updating. */
+  async launchDesktopApp(appPath: string): Promise<boolean> {
+    this.setState("starting");
+    log(`[lifecycle] launching desktop app: ${appPath}`);
+    if (!openDesktopApp(appPath)) {
+      this.setState("disconnected");
+      return false;
+    }
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      if (await this.probe(2000)) {
+        const detected = await detectFlavor(this.baseUrl, 3000);
+        if (detected) await this.applyFlavor(detected.flavor, detected.needsAuth);
+        this.streams?.retryNow();
+        return true;
+      }
+      await sleep(1500);
+    }
+    this.problemEmitter.fire("DSH 桌面版已启动，但 60s 内没有在本地址就绪。");
+    this.setState("disconnected");
+    this.keepDetecting();
+    return false;
+  }
+
   /** Start dsh web detached (Windows-only in V1, see design.md known limits).
    *  `attempt` guards the "locate it by hand" retry against loops. */
   async startDsh(attempt = 0): Promise<boolean> {
     this.setState("starting");
+    // Guard: never start a second server next to a live one — same ~/.dsh session
+    // store, two agent loops, two writers. If anything answers, just use it.
+    if (await this.probe(800)) {
+      const already = await detectFlavor(this.baseUrl, 3000);
+      if (already) {
+        warn("[lifecycle] 该地址已有实例在运行，取消拉起（避免第二个写者）");
+        await this.applyFlavor(already.flavor, already.needsAuth);
+        this.streams?.retryNow();
+        return true;
+      }
+    }
+    this.problemEmitter.fire(
+      "即将启动独立的 dsh web 实例（旧版 CLI）：①它与运行中的桌面版共用同一个会话库 ~/.dsh，同时写入会互相覆盖；②旧版少 3 组插件，且读不了今天之后桌面版写的 v4 会话。更推荐直接使用桌面版 App。",
+    );
     const cfg = vscode.workspace.getConfiguration("dsh-vscode");
     let url: URL;
     try {
@@ -364,6 +411,7 @@ export class DshLifecycle {
     this.muxEmitter.dispose();
     this.hostEmitter.dispose();
     this.problemEmitter.dispose();
+    this.needsInstanceEmitter.dispose();
   }
 }
 

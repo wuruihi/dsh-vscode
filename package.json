@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.18.5",
+  "version": "0.19.0",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -65,6 +65,10 @@
         "title": "DSH: Show Logs"
       },
       {
+        "command": "dsh-vscode.selectInstance",
+        "title": "DSH: Select DSH Instance (Desktop App / Legacy)"
+      },
+      {
         "command": "dsh-vscode.locateDsh",
         "title": "DSH: Locate dsh CLI / node Path"
       }
@@ -85,12 +89,12 @@
         "dsh-vscode.baseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:3080",
-          "description": "Base URL of the running dsh web instance."
+          "description": "Escape hatch: pin the DSH instance to connect to. Leave it at the default value and the extension auto-probes the desktop App (127.0.0.1:19387) first, then a legacy `dsh web` (127.0.0.1:3080). Setting it to any other value disables auto-probing. \"DSH: Select DSH Instance\" writes this setting."
         },
         "dsh-vscode.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Offer to start dsh web when it is not reachable."
+          "description": "When no instance answers anywhere, offer to open the desktop DSH App (preferred). Starting a second local `dsh web` is offered as a fallback — it shares ~/.dsh with the desktop App and is an older release, so two writers are possible."
         },
         "dsh-vscode.authToken": {
           "type": "string",
@@ -121,6 +125,7 @@
     "watch": "node esbuild.mjs --watch",
     "smoke": "node scripts/smoke.mjs",
     "args:audit": "node scripts/args-audit.mjs",
+    "regress:locate": "node scripts/locate-regress.cjs",
     "package": "pnpm build && vsce package --no-dependencies"
   },
   "devDependencies": {

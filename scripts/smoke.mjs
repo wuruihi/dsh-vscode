@@ -7,23 +7,36 @@
  *           follow snapshot as history, modelCatalog
  * Exit 0 = PASS.
  *
- * Usage: node scripts/smoke.mjs [baseUrl] [--token <launchToken>]
- * Token fallback (v012): --token arg > DSH_SMOKE_TOKEN > log scan (newest file
- * first: ~/.dsh/dsh-vscode-web.log, ~/.dsh[/logs], ~/dsh/logs, plus whatever
- * DSH_SMOKE_LOG names). Candidates are tried newest-first until one mints a
- * cookie.
+ * Usage: node scripts/smoke.mjs [baseUrl] [--base-url <url>] [--token <launchToken>]
+ *        [--from-credentials]
+ *
+ * Auth (v012), tried in order:
+ *   1. --from-credentials (or DSH_SMOKE_FROM_CREDENTIALS=1): mint the signed cookie
+ *      straight from ~/.dsh/.credentials.yaml (client-connection/browser-session
+ *      secret). REQUIRED for the desktop App — it prints no launch token and writes
+ *      none to disk, so the log/token path can never work there.
+ *   2. --token arg > DSH_SMOKE_TOKEN > log scan (newest file first:
+ *      ~/.dsh/dsh-vscode-web.log, ~/.dsh[/logs], ~/dsh/logs, plus whatever
+ *      DSH_SMOKE_LOG names). Candidates are tried newest-first until one mints a
+ *      cookie.
+ *   3. credentials mint as a last resort.
  */
 import WebSocket from "ws";
+import { createHash, createHmac } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const argv = process.argv.slice(2);
-const baseUrl = (argv.find((a) => !a.startsWith("--")) ?? "http://127.0.0.1:3080").replace(/\/+$/, "");
-const tokenArg =
-  argv[argv.indexOf("--token") + 1] && argv.indexOf("--token") !== -1
-    ? argv[argv.indexOf("--token") + 1]
-    : process.env.DSH_SMOKE_TOKEN;
+const flagValue = (name) => {
+  const i = argv.indexOf(name);
+  return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : undefined;
+};
+const positional = argv.find((a, i) => !a.startsWith("--") && (i === 0 || !argv[i - 1].startsWith("--")));
+const baseUrl = (flagValue("--base-url") ?? positional ?? "http://127.0.0.1:3080").replace(/\/+$/, "");
+const fromCredentials =
+  argv.includes("--from-credentials") || /^(1|true|yes)$/i.test(process.env.DSH_SMOKE_FROM_CREDENTIALS ?? "");
+const tokenArg = flagValue("--token") ?? process.env.DSH_SMOKE_TOKEN;
 
 const results = [];
 let rpcSeq = 0;
@@ -187,6 +200,35 @@ async function exchangeCookie(token) {
   }
 }
 
+const COOKIE_PREFIX = "dsh-auth-";
+const SECRET_RECORD = /browser-session:[\s\S]*?secret:\s*([A-Za-z0-9_-]+)/;
+
+/** Independent re-implementation of src/connection/browser-auth.ts (the smoke
+ *  script must not import extension internals): the server persists a 32-byte
+ *  secret in ~/.dsh/.credentials.yaml; cookie name = "dsh-auth-" +
+ *  base64url(sha256(authority)), value = v1.<b64url(payload)>.<b64url(hmac)>. */
+async function mintCookieFromCredentials() {
+  const credentialsPath = process.env.DSH_SMOKE_CREDENTIALS ?? join(homedir(), ".dsh", ".credentials.yaml");
+  let text;
+  try {
+    text = await readFile(credentialsPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const m = SECRET_RECORD.exec(text);
+  if (!m) return undefined;
+  const secret = Buffer.from(m[1], "base64url");
+  if (secret.byteLength !== 32) return undefined;
+  const authority = new URL(baseUrl).host;
+  const b64u = (b) => b.toString("base64url");
+  const name = COOKIE_PREFIX + b64u(createHash("sha256").update(authority).digest());
+  const issuedAt = Date.now() - 1000; // tolerate clock skew (issuedAt <= now)
+  const body = b64u(
+    Buffer.from(JSON.stringify({ version: 1, authority, issuedAt, expiresAt: issuedAt + 7 * 24 * 60 * 60 * 1000 })),
+  );
+  return `${name}=v1.${body}.${b64u(createHmac("sha256", secret).update(body).digest())}`;
+}
+
 // ---------- RPC helpers ----------
 
 async function call(method, payload, timeoutMs = 30_000, flavor = "legacy") {
@@ -220,35 +262,68 @@ if (!det) {
 ok("detect flavor", true, `${det.flavor}${det.needsAuth ? " (auth required)" : ""}`);
 
 if (det.flavor === "v012" && det.needsAuth) {
-  const tokens = await discoverTokens();
-  if (tokens.length === 0) {
-    ok("v012 auth", false, "no launch token (pass --token, set DSH_SMOKE_TOKEN, or point DSH_SMOKE_LOG at the dsh web log)");
-    process.exit(1);
-  }
-  // Try the candidates newest-first. A token that mints a real cookie wins
-  // outright; a bare 200/302 (the old acceptance rule) is only a fallback, so a
-  // stale token can never cut the search short.
+  /** A cookie only counts once the server stops answering 401. */
+  const cookieWorks = async () => {
+    const after = await detectFlavor();
+    return !!after && !after.needsAuth;
+  };
   let got = false;
-  let used = 0;
-  let fallback = 0;
-  for (const [i, t] of tokens.entries()) {
-    const accepted = await exchangeCookie(t);
-    if (accepted && cookie) {
-      got = true;
-      used = i + 1;
-      break;
+  let detail = "";
+
+  // 1. credentials mint — the ONLY path that works against the desktop App: it
+  //    prints no launch token and persists none.
+  if (fromCredentials) {
+    const minted = await mintCookieFromCredentials();
+    if (!minted) {
+      detail = "credentials mint requested but ~/.dsh/.credentials.yaml has no usable browser-session secret";
+    } else {
+      cookie = minted;
+      got = await cookieWorks();
+      detail = got ? "cookie minted from ~/.dsh/.credentials.yaml (browser-session secret)" : "minted cookie was rejected";
     }
-    if (accepted && fallback === 0) fallback = i + 1;
   }
-  if (!got && fallback > 0) {
-    got = true;
-    used = fallback;
+
+  // 2. launch tokens from args/logs (externally started servers). Try the
+  //    candidates newest-first: a token that mints a real cookie wins outright,
+  //    a bare 200/302 (the old acceptance rule) is only a fallback, so a stale
+  //    token can never cut the search short.
+  if (!got) {
+    const tokens = await discoverTokens();
+    let used = 0;
+    let fallback = 0;
+    for (const [i, t] of tokens.entries()) {
+      const accepted = await exchangeCookie(t);
+      if (accepted && cookie) {
+        got = true;
+        used = i + 1;
+        break;
+      }
+      if (accepted && fallback === 0) fallback = i + 1;
+    }
+    if (!got && fallback > 0) {
+      got = true;
+      used = fallback;
+    }
+    if (got) {
+      detail = tokens.length > 1 ? `cookie minted with token ${used}/${tokens.length} from the log candidates` : detail || "cookie exchanged from a launch token";
+    } else if (tokens.length > 0) {
+      detail = `none of the ${tokens.length} launch token(s) found in the logs were accepted`;
+    }
   }
-  const detail = got
-    ? tokens.length > 1
-      ? `cookie minted with token ${used}/${tokens.length} from the log candidates`
-      : ""
-    : `none of the ${tokens.length} launch token(s) found in the logs were accepted`;
+
+  // 3. credentials mint as a last resort.
+  if (!got) {
+    const minted = await mintCookieFromCredentials();
+    if (minted) {
+      cookie = minted;
+      got = await cookieWorks();
+      if (got) detail = "cookie minted from ~/.dsh/.credentials.yaml (fallback)";
+    }
+  }
+
+  if (!got && !detail) {
+    detail = "no launch token (pass --token, set DSH_SMOKE_TOKEN, point DSH_SMOKE_LOG at the dsh web log, or use --from-credentials)";
+  }
   ok("v012 auth", got, detail);
   if (!got) process.exit(1);
   det = await detectFlavor();
@@ -425,6 +500,7 @@ if (det.flavor === "legacy") {
   let assistantText = "";
   let sawChunk = false;
   let sawTextDelta = false;
+  let sawMessage = false;
   let turnEnded = false;
   const turnDeadline = Date.now() + 90_000;
   await call(
@@ -453,13 +529,36 @@ if (det.flavor === "legacy") {
         sawTextDelta = true;
         assistantText += ch.text;
       }
+    } else if (ev.type === "assistant/message") {
+      // DSH 0.2.0 dropped the per-token assistant/chunk stream: a real turn
+      // (probed 2026-09-30 on 19387, 4 turns incl. tool steps) emits ONLY
+      // assistant/message — one complete message per step, with the chunk
+      // timeline embedded in data.stream[]. webview/src/fold.ts handles both
+      // shapes, so assistant prose must be accepted from either one.
+      sawMessage = true;
+      const text = (ev.data?.message?.content ?? [])
+        .filter((c) => c?.type === "text")
+        .map((c) => c.text)
+        .join("");
+      if (text) assistantText = text;
     } else if (ev.type === "turn/end") {
       turnEnded = true;
     }
   }
   // An isolated test server may have no model credentials: a finish-chunk
   // (even an error finish) still proves the streaming path end to end.
-  ok("session/prompt(requestId) + follow chunk stream", sawChunk, sawTextDelta ? `text=${JSON.stringify(assistantText.slice(0, 40))}` : "chunks streamed (no text: server has no model key)");
+  const how = sawTextDelta ? "assistant/chunk text-delta" : sawMessage ? "assistant/message（整条）" : "";
+  ok(
+    "session/prompt(requestId) + assistant output",
+    sawTextDelta || assistantText.length > 0,
+    assistantText.length > 0
+      ? `text=${JSON.stringify(assistantText.slice(0, 40))} via ${how}`
+      : sawMessage
+        ? "assistant/message arrived but carried no text (server has no model key?)"
+        : sawChunk
+          ? "chunks streamed but no text"
+          : "follow stream carried no assistant output",
+  );
   ok("turn/end within 90s", turnEnded);
 
   // modelCatalog

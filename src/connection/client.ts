@@ -18,6 +18,7 @@
 import type { Auth } from "./auth.js";
 import type { V012Streams } from "./remote.js";
 import { makeRpcId, type Flavor } from "./protocol.js";
+import { warn } from "../log.js";
 
 export class DshRpcError extends Error {
   constructor(
@@ -85,6 +86,8 @@ export class RpcClient {
   private v012: V012Streams | undefined;
   /** sessionId → follow cursor (v012 session/page upper bound). */
   private historyCursor = new Map<string, number>();
+  /** DSH 0.2.0 removed subagents/list; remember the first failure and stop. */
+  private subagentsListUnsupported = false;
 
   constructor(
     private readonly baseUrl: string,
@@ -217,7 +220,24 @@ export class RpcClient {
     if (method === "subagent.list") {
       // rc.2: subagent.list {parentSessionId}; 0.1.2-alpha.x: subagents/list
       // {request:{parentSessionId}}; 0.1.5-rc.2: subagents/list flat {parentSessionId}.
-      return this.v012Request<T>("subagents/list", { parentSessionId: payload?.parentSessionId }, timeoutMs);
+      //
+      // 0.2.0 (desktop) REMOVED this endpoint entirely — the gateway now only has
+      // subagents/prompt + subagents/interruptByParent (verified with args:audit
+      // against the desktop runtime: 136 descriptors, this is the only drift).
+      // Degrade EXPLICITLY instead of returning a silent empty list: warn once,
+      // then stop calling it. The subagent tree itself is unaffected — it comes
+      // from session/list rows (origin:"subagent" + parentSessionId).
+      if (this.subagentsListUnsupported) return { entries: [] } as T;
+      try {
+        return await this.v012Request<T>("subagents/list", { parentSessionId: payload?.parentSessionId }, timeoutMs);
+      } catch (err) {
+        this.subagentsListUnsupported = true;
+        warn(
+          `[client] subagents/list 不可用（DSH 0.2.0 已移除该端点）——子智能体条目列表降级为空，` +
+            `会话树不受影响。原因：${String(err)}`,
+        );
+        return { entries: [] } as T;
+      }
     }
     if (method === "commands/list") {
       return this.v012Request<T>("commands/list", { agentId: payload?.args?.agentId }, timeoutMs);
@@ -305,7 +325,7 @@ export class RpcClient {
     try {
       res = await fetch(`${this.baseUrl}/api/${endpoint}`, {
         method: "POST",
-        headers: { "content-type": "application/json", ...this.auth.cookieHeader() },
+        headers: { "content-type": "application/json", ...this.auth.cookieHeader(this.baseUrl) },
         body: JSON.stringify(envelope),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -313,7 +333,7 @@ export class RpcClient {
       throw new DshNetworkError(`transport failure on ${endpoint}: ${String(err)}`, err);
     }
     if ((res.status === 401 || res.status === 403) && !isRetry) {
-      this.auth.invalidate();
+      this.auth.invalidate(this.baseUrl);
       const ok = await this.auth.ensureCookie(this.baseUrl, this.home);
       if (!ok) throw new DshAuthNeededError(`DSH 0.1.2+ 服务器需要授权 cookie（未能从启动日志获取 token）`);
       return this.v012Request<T>(endpoint, args, timeoutMs, true);
