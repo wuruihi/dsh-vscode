@@ -659,22 +659,11 @@ export function App() {
               {label}
             </button>
           ))}
+          <span className="spacer" />
+          <button className="domain-close" title="关闭抽屉（Esc）" onClick={() => setDrawer("")}>
+            关闭
+          </button>
         </div>
-        {domainOf(drawer) === "sessions" && (
-          <div className="subchips">
-            {(
-              [
-                ["sessions", "会话列表"],
-                ["schedules", "提醒"],
-                ["produced", "产出"],
-              ] as const
-            ).map(([d, label]) => (
-              <button key={d} className={`chip${drawer === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
       </>
     );
 
@@ -824,6 +813,29 @@ export function App() {
               {tokens ? ` · ${tokens}` : ""}
             </span>
             {ctxPct !== undefined && <span className="cap-pop-v">上下文 {Math.round(ctxPct * 100)}%</span>}
+          </div>
+          {/* 提醒 / 产出属于"当前会话的状态"，放在胶囊浮层里，不再和会话列表平级 */}
+          <div className="cap-pop-row">
+            <button
+              className="link-btn"
+              onClick={() => {
+                setCapOpen(false);
+                setDrawer("schedules");
+                post({ t: "list-schedules" });
+              }}
+            >
+              ⏰ 提醒
+            </button>
+            <span className="spacer" />
+            <button
+              className="link-btn"
+              onClick={() => {
+                setCapOpen(false);
+                setDrawer("produced");
+              }}
+            >
+              ▤ 本次产出（{producedAll.size}）
+            </button>
           </div>
         </div>
       )}

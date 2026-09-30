@@ -1226,3 +1226,10 @@ body { line-height: 1.5; }
 .sheet-filters .sheet-search { max-width: none; width: 100%; font-size: 12px; padding: 4px 8px; }
 .sheet-filters .chips { display: flex; gap: 6px; }
 .sheet-filters .chip { padding: 2px 12px; }
+/* 抽屉域 tab 行：右端"关闭"按钮（与三个 tab 同一行） */
+.domain-tabs { padding-right: 6px; }
+.domain-close {
+  border: 0; background: none; color: var(--vscode-descriptionForeground);
+  font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer; flex: none;
+}
+.domain-close:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, .12)); }

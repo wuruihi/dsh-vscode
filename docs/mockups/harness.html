@@ -25,8 +25,9 @@
     --dsh-card: #252526; --dui-card: #252526; --dui-border: #3c3c3c;
   }
   #stage { height: 100%; display: flex; justify-content: center; padding: 10px; box-sizing: border-box; }
-  #panel { width: var(--panel-w, 640px); height: 100%; display: flex; flex-direction: column; overflow: hidden;
-           border: 1px solid #3c3c3c; border-radius: 6px; }
+  /* webview 产物挂载到 #root（原先给的是 #panel，导致 React 没挂上、整屏空白） */
+  #root { width: var(--panel-w, 640px); height: 100%; display: flex; flex-direction: column; overflow: hidden;
+          border: 1px solid #3c3c3c; border-radius: 6px; }
   #log { position: fixed; left: 8px; bottom: 8px; max-width: 44vw; max-height: 22vh; overflow: auto;
          font: 11px/1.45 Consolas, monospace; color: #8a8a8a; background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; }
   #hint { position: fixed; right: 8px; bottom: 8px; font: 11px/1.5 Consolas, monospace; color: #8a8a8a;
@@ -34,7 +35,7 @@
 </style>
 </head>
 <body>
-<div id="stage"><div id="panel"></div></div>
+<div id="stage"><div id="root"></div></div>
 <div id="log"></div>
 <div id="hint">查询参数：?w=640（面板宽）&amp;drawer=sessions|jobs|settings|""（打开哪个抽屉）</div>
 
@@ -54,6 +55,13 @@
   window.acquireVsCodeApi = () => api;
   const logEl = document.getElementById("log");
   const log = (s) => { logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+  // 让空白屏变成可诊断的：任何脚本错误与未捕获拒绝都写进左下角日志（截图即可见）
+  window.addEventListener("error", (e) => log("✗ error: " + (e.message || e.error) + " @" + (e.filename || "").split("/").pop() + ":" + e.lineno));
+  window.addEventListener("unhandledrejection", (e) => log("✗ reject: " + (e.reason && e.reason.message ? e.reason.message : e.reason)));
+  setTimeout(() => {
+    const root = document.getElementById("root");
+    log("mount#root children=" + (root ? root.children.length : "null") + " bodyH=" + document.body.clientHeight);
+  }, 1500);
 
   // ── 2) 假数据（形状对齐真实 wire）──
   const SESSIONS = [
