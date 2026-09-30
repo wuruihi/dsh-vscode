@@ -349,6 +349,21 @@ export class RpcClient {
       return this.v012Request<T>("goals/clear", { agentId: payload?.agentId, ref: payload?.ref }, timeoutMs);
     }
 
+    // ---- 需求三第三批：定时提醒（manager 只传内层字段，包裹在这一层）----
+    if (method === "schedule.list") {
+      return this.v012Request<T>("schedule/list", { request: { sessionId: payload?.sessionId } }, timeoutMs);
+    }
+    if (method === "schedule.delete") {
+      return this.v012Request<T>(
+        "schedule/delete",
+        { request: { id: payload?.id, sessionId: payload?.sessionId } },
+        timeoutMs,
+      );
+    }
+    if (method === "schedule.catalog") {
+      return this.v012Request<T>("schedule/catalog", {}, timeoutMs);
+    }
+
     // Unknown method: best-effort slash mapping with args as-is (loose parsing
     // policy — let the server reject it loudly rather than guessing silently).
     return this.v012Request<T>(method.replace(/\./g, "/"), payload, timeoutMs);

@@ -99,12 +99,17 @@ export function App() {
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
   const [drawer, setDrawer] = useState<
-    "" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings" | "search" | "produced"
+    "" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings" | "search" | "produced" | "schedules"
   >("");
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
   const [killConfirm, setKillConfirm] = useState<string | null>(null);
+  /** 需求三第三批：当前会话的 active 提醒（schedule/list 裸数组；无 nextRunAt）。 */
+  const [schedules, setSchedules] = useState<
+    { id: string; kind?: string; title?: string; prompt?: string; scheduledAt?: string; afterSeconds?: number; everySeconds?: number; time?: string; timeZone?: string; expression?: string }[]
+  >([]);
+  const [schedDelConfirm, setSchedDelConfirm] = useState<string | null>(null);
   const [subagentEntries, setSubagentEntries] = useState<{ id: string; mode: string; label: string; activity: string; hasChildren: boolean }[]>([]);
   // subagent transcript sheet: which child is open + its history events
   const [subView, setSubView] = useState<{ id: string; label?: string; mode: string; activity: string } | null>(null);
@@ -279,7 +284,14 @@ export function App() {
           break;
         }
         case "queue":
+          // Session-scoped (a stale frame must not paint) — and note 0.2.0
+          // never sends queue frames at all; see the inbox branch below.
+          if (current && m.sessionId && m.sessionId !== current) break;
           setQueue(m.items);
+          break;
+        case "schedules":
+          if (current && m.sessionId && m.sessionId !== current) break;
+          setSchedules(m.items ?? []);
           break;
         case "projection":
           // The resolved session model is keyed by session, so accept it before
@@ -289,6 +301,17 @@ export function App() {
           if (m.key === "currentModel") {
             const value = m.value as { provider: string; model: string; reasoningEffort?: string } | null;
             if (value?.provider && value?.model) setSessionModels((s) => ({ ...s, [m.sessionId]: value }));
+            break;
+          }
+          // Pending input (0.2.0): the `inbox` projection replaced the queue
+          // frames — it drives the same chip row (design.md §3.8).
+          if (m.key === "inbox") {
+            if (current && m.sessionId !== current) break;
+            const v = (m.value ?? {}) as { "next-turn"?: unknown[]; "next-step"?: unknown[] };
+            setQueue([
+              ...inboxItemsToQueue(v["next-turn"], "next-turn"),
+              ...inboxItemsToQueue(v["next-step"], "steering"),
+            ]);
             break;
           }
           // Session-scoped UI state must never leak across sessions: pushes
@@ -687,6 +710,17 @@ export function App() {
           >
             <Icon name="edit" size={13} />
           </button>
+          <button
+            className={`icon-btn${drawer === "schedules" ? " is-on" : ""}`}
+            title="定时提醒：本会话登记的提醒（可删除）"
+            onClick={() => {
+              const opening = drawer !== "schedules";
+              setDrawer((d) => (d === "schedules" ? "" : "schedules"));
+              if (opening) post({ t: "list-schedules" });
+            }}
+          >
+            <Icon name="list" size={13} />
+          </button>
           <button className="icon-btn" title="新建会话" onClick={() => post({ t: "new-session" })}>
             <Icon name="plus" size={13} />
           </button>
@@ -884,6 +918,49 @@ export function App() {
               仅统计 edit/write 类工具记录的产出，命令行生成的文件不计；只覆盖已加载的历史窗口。看 diff 用命令「DSH: Show This
               Session&apos;s Produced Files」。
             </div>
+          </div>
+        </Sheet>
+      )}
+
+      {/* 定时提醒（仅当前会话的 active 项；schedule/list 返回裸数组） */}
+      {drawer === "schedules" && (
+        <Sheet
+          title="⏰ 定时提醒"
+          onClose={() => setDrawer("")}
+          headControls={
+            <button className="link-btn" onClick={() => post({ t: "list-schedules" })}>
+              刷新
+            </button>
+          }
+        >
+          <div className="session-list">
+            {schedules.length === 0 && (
+              <div className="muted pad">
+                （当前会话没有已登记的提醒）只显示本会话进行中的提醒；会话被归档时它的提醒会被自动清除。本体的变更事件插件收不到推送，请点「刷新」。
+              </div>
+            )}
+            {schedules.map((s) => (
+              <div key={s.id} className="session-row sched-row">
+                <span className="hit-badge">{scheduleKindLabel(s)}</span>
+                <span className="session-title">{s.title || s.prompt || s.id.slice(0, 8)}</span>
+                <span className="hit-path">{s.scheduledAt ? new Date(s.scheduledAt).toLocaleString() : ""}</span>
+                {schedDelConfirm === s.id ? (
+                  <button
+                    className="link-btn danger"
+                    onClick={() => {
+                      post({ t: "delete-schedule", id: s.id });
+                      setSchedDelConfirm(null);
+                    }}
+                  >
+                    确认删除
+                  </button>
+                ) : (
+                  <button className="link-btn" onClick={() => setSchedDelConfirm(s.id)}>
+                    删除
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </Sheet>
       )}
@@ -2164,6 +2241,50 @@ const GOAL_PHASE_LABEL: Record<string, string> = {
   paused: "已暂停",
   blocked: "受阻",
 };
+
+/** 0.2.0 pending input lives in the `inbox` projection — there are NO queue
+ *  frames any more. Items are full UserMessage objects, so the REAL message.id
+ *  must be kept (`session/updateQueue` resolves remove/edit/steer by that id; a
+ *  synthetic id fails with `session/queue-item-not-found`) and the text lives in
+ *  `content[]`. `placement` stays in the lexicon the UI switches on
+ *  ("next-turn" | "steering") — it drives the icon and the steer button. */
+function inboxItemsToQueue(
+  items: unknown[] | undefined,
+  placement: "next-turn" | "steering",
+): { id: string; placement: string; text: string }[] {
+  return (items ?? []).map((item, i) => {
+    const o = (item ?? {}) as { id?: unknown; content?: { type?: string; text?: string }[]; text?: unknown };
+    const parts = Array.isArray(o.content) ? o.content : [];
+    const text =
+      parts
+        .filter((c) => c?.type === "text" && typeof c.text === "string")
+        .map((c) => c.text as string)
+        .join("") ||
+      (typeof o.text === "string" ? o.text : "") ||
+      (typeof item === "string" ? item : "") ||
+      (placement === "steering" ? "(引导中)" : "(排队中)");
+    return { id: typeof o.id === "string" && o.id ? o.id : `${placement}-${i}`, placement, text };
+  });
+}
+
+/** schedule/list rows carry `kind` + a kind-specific field (there is no
+ *  nextRunAt); render the cadence in plain language. */
+function scheduleKindLabel(s: {
+  kind?: string;
+  afterSeconds?: number;
+  everySeconds?: number;
+  time?: string;
+  expression?: string;
+}): string {
+  const kind = s.kind ?? "";
+  if (kind === "after" && typeof s.afterSeconds === "number") return `${Math.round(s.afterSeconds / 60)} 分钟后`;
+  if (kind === "every" && typeof s.everySeconds === "number") return `每 ${Math.round(s.everySeconds / 60)} 分钟`;
+  if (kind === "at" && s.time) return `定点 ${s.time}`;
+  if (kind === "daily" && s.time) return `每天 ${s.time}`;
+  if (kind === "weekly") return "每周";
+  if (kind === "cron") return `cron ${s.expression ?? ""}`.trim();
+  return kind || "提醒";
+}
 
 /** Goal dock bar — the current session's goal projection, pinned under the
  *  header (web GUI GoalBar dock). phase: active|complete|paused|blocked.

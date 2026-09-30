@@ -153,6 +153,8 @@ export type ExtToView =
   /** Protocol capability hint: legacy hosts have no pin/unpin/unarchive. */
   | { t: "caps"; flavor: "v012" | "legacy" }
   | { t: "open-search" }
+  /** 需求三第三批：当前会话的 active 提醒（schedule/list 返回裸数组）。 */
+  | { t: "schedules"; sessionId: string; items: { id: string; kind?: string; title?: string; prompt?: string; scheduledAt?: string; afterSeconds?: number; everySeconds?: number; time?: string; timeZone?: string; expression?: string }[] }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
   /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
   | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
@@ -213,4 +215,7 @@ export type ViewToExt =
    *  value.goal.{id,revision} — never from the projection top level. */
   | { t: "goal-action"; action: "pause" | "resume" | "complete" | "clear"; ref: { id: string; revision: number } }
   | { t: "goal-create"; objective: string }
-  | { t: "kill-job"; jobId: string };
+  | { t: "kill-job"; jobId: string }
+  // 需求三第三批：定时提醒（仅当前会话的 active 项；字段无 nextRunAt）
+  | { t: "list-schedules" }
+  | { t: "delete-schedule"; id: string };

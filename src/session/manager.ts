@@ -354,6 +354,15 @@ export class SessionManager {
       this.host.post({ t: "projection", sessionId, key: "plan", value: pv.plan ?? { active: false } });
       this.host.post({ t: "projection", sessionId, key: "todos", value: pv.todos ?? null });
       this.host.post({ t: "projection", sessionId, key: "goal", value: pv.goal ?? null });
+      // Pending input: 0.2.0 has NO queue frames at all (session/control carries
+      // only baseline+projection) — the `inbox` projection is what the user sees
+      // as queued/steering messages (design.md §3.8).
+      this.host.post({
+        t: "projection",
+        sessionId,
+        key: "inbox",
+        value: pv.inbox ?? { "next-turn": [], "next-step": [] },
+      });
       // The session's OWN model (host projection): the chip must show what this
       // session runs, not the host-wide catalog default. Also feeds this
       // workspace's "last model used here" memory for new chats.
@@ -969,6 +978,43 @@ export class SessionManager {
       this.host.post({ t: "notify", kind: "info", message: "已请求终止任务" });
     } catch (err) {
       this.host.post({ t: "notify", kind: "error", message: `终止任务失败：${errText(err)}` });
+    }
+  }
+
+  // ---------- 定时提醒（需求三第三批，design.md §3.8）----------
+  /** `schedule/list` returns a BARE ARRAY of the CURRENT session's ACTIVE tasks
+   *  (fields id/kind/title/prompt/scheduledAt + kind-specific extras — there is
+   *  no `nextRunAt` and no sessionId on the row). Archived sessions get their
+   *  tasks dropped by stopSessionTasks, so an empty list can also mean "the
+   *  reminder went away with its session". */
+  async listSchedules(): Promise<void> {
+    try {
+      const rows = await this.lifecycle.client.call<unknown[]>("schedule.list", { sessionId: this.currentSession });
+      this.host.post({
+        t: "schedules",
+        sessionId: this.currentSession ?? "",
+        items: (Array.isArray(rows) ? rows : []) as any,
+      });
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "warn", message: `提醒读取失败：${errText(err)}` });
+      this.host.post({ t: "schedules", sessionId: this.currentSession ?? "", items: [] });
+    }
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    try {
+      const r = await this.lifecycle.client.call<{ id?: string; deleted?: boolean }>("schedule.delete", {
+        id,
+        sessionId: this.currentSession,
+      });
+      this.host.post(
+        r?.deleted === true
+          ? { t: "notify", kind: "info", message: "提醒已删除" }
+          : { t: "notify", kind: "warn", message: "服务端未确认删除（可能已随会话归档被清理）" },
+      );
+      await this.listSchedules();
+    } catch (err) {
+      this.host.post({ t: "notify", kind: "error", message: `删除提醒失败：${errText(err)}` });
     }
   }
 

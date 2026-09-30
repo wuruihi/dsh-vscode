@@ -4,6 +4,20 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.19.4 — 需求三第三批：待发消息条修复（inbox 驱动）/ 定时提醒管理 / UI 排版优化（方向 B）
+
+**第四处静默失效（修复）**：0.2.0 的 `session/control` 只发 `baseline`（其 `value` 仅含 `projections`）与 `projection` 两种帧——老的 **queue 帧彻底消失** ⇒ 插件里"排队/待发消息"永远不显示。改由 `inbox` 投影驱动：webview 在既有 `case "projection"` 里处理 `key === "inbox"`（零 host 改动、天然带会话守卫），宿主只在历史种子处补一次。**条目处理按实测结构**：用**真实 `message.id`**（`session/updateQueue` 正是拿它定位；合成 id 会让移除/编辑/插队三个按钮全部 `session/queue-item-not-found`）、文本从 `content[]` 的 text 块拼、`placement` 用既有词表（`next-turn` / `steering`——它驱动图标与"插队"按钮，造新词会让已引导条目显示错按钮）。另加 `queue`/`schedules` 帧的 sessionId 守卫，修掉切会话的"漏显示 + 串台"双向错。
+
+**第二批回归（本轮开头已修，`8090af9`）**：`manager.listSubagents` 调 `session.projections` 时多包了一层 `{request:{…}}`，而 `client.ts` 的显式分支读 `payload?.sessionId` 并自己包 request ⇒ 实发 `{"request":{}}` → `gateway/input-invalid` → 被 `.catch` 吞掉 ⇒ **子代理目录投影恒空、`mode` 恒 `"unknown"`、label 只能退化用提示词**。
+
+**定时提醒管理（新）**：`schedule/list` 实测返回**裸数组**、只含**当前会话的 active 任务**；字段是 `id/kind/title/prompt/scheduledAt`（**没有 `nextRunAt`，也没有 sessionId**）。面板新增「⏰ 定时提醒」：列表（kind 人话 + 本地时间）＋「删除」（二次确认，校验回执 `deleted === true`，否则告警"可能已随会话归档被清理"）＋「刷新」（`schedule/changed` 是本体本地事件，插件收不到推送）。`schedule/list|delete|catalog` 均在 `client.ts` 写显式字面量分支（`manager` 只传内层字段——这条包裹契约已在代码里注释钉住）。
+
+**UI 排版优化（方向 B，按桌面版本体实测令牌）**：本体字号主力是 **12/13/14 + 11px**（10px 属罕见），而行高是**成对的绝对像素**（12→18、13→20、14→22，≈1.5）。据此：字号收敛（`10/10.5 → 11.5`、`11 → 12`，删掉两档极小字）、去掉"浅色 + `opacity`"的**双重衰减**、正文行高 `1.7 → 1.57`、`body` 行高 1.5、时间列加宽防裁切。**颜色继续全部走 VSCode 主题变量**（不搬本体配色，避免和用户主题打架）。
+
+**验证**：`pnpm compile` / `pnpm build` exit 0；`pnpm regress:all` 全绿（fold 24/24、fence 8/8、pathlink 8/8、locate 25/25 含 1 例环境 skip、model 23/23、repair 14/14）；`pnpm args:audit`（0.2.0 asar）**0 处不匹配**，覆盖点 **40 → 43**（22 `v012Request` + 7 流 + 10 包裹 + 4 会话级写）。
+
+**待用户手测**：① agent 忙时连发两条 → 面板出现待发条、**芯片 id 与 `inbox` 的 `message.id` 一致**、turn/end 后清空 ② 切到另一个有待发消息的会话立刻可见、切回无待发的立刻清空（不串台）③ 提醒：登记 → 列出（时间/节奏正确）→ 删除 → 刷新 ④ **UI 目视对比**（字大了、行距松了、灰色不再发虚）
+
 ## v0.19.3 — 需求三第二批：子代理四条路径修复 / 计划评审验证 / Goal 控制 / 后台任务接入 / 旧 CLI 收尾
 
 **流程**：方案 v1 → 独立子代理审查（10 条阻塞项 + 8 条建议，其中"怎么修"有**三处实质错误**）→ 我逐条独立复核（含实测）→ v2 定稿 → 用户确认 → 执行。审查这次的价值同样是"把已坏的功能找出来"。

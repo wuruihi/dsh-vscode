@@ -343,6 +343,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "kill-job":
         void manager.killJob(m.jobId);
         break;
+      case "list-schedules":
+        void manager.listSchedules();
+        break;
+      case "delete-schedule":
+        void manager.deleteSchedule(m.id);
+        break;
       case "respond-approval":
         void manager.respondApproval(m.rpcId, m.sessionId, m.approvalId, m.outcome);
         break;
