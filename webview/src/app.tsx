@@ -651,7 +651,7 @@ export function App() {
           {(
             [
               ["sessions", "会话"],
-              ["jobs", "运行"],
+              ["jobs", "诊断"],
               ["settings", "设置"],
             ] as const
           ).map(([d, label]) => (
@@ -660,6 +660,15 @@ export function App() {
             </button>
           ))}
           <span className="spacer" />
+          <button className="domain-act" title="后台任务 / 子代理（诊断）" onClick={() => pickDomain("jobs")}>
+            ⚙ 任务
+          </button>
+          <button className="domain-act" title="子代理目录（诊断）" onClick={() => pickDomain("subs")}>
+            ▤ 子代理
+          </button>
+          <button className="domain-act" title="原始事件台账（高级，排障用）" onClick={() => pickDomain("traj")}>
+            🧭 轨迹
+          </button>
           <button className="domain-act" title="本会话的定时提醒" onClick={() => pickDomain("schedules")}>
             ⏰ 提醒
           </button>
@@ -845,7 +854,7 @@ export function App() {
             {(
               [
                 ["sessions", "会话"],
-                ["jobs", "运行"],
+                ["jobs", "诊断"],
                 ["settings", "设置"],
               ] as const
             ).map(([d, label]) => (

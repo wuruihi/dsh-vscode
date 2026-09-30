@@ -143,14 +143,14 @@
   setTimeout(() => {
     if (drawer) {
       const btn = [...document.querySelectorAll("button")].find((b) => (b.getAttribute("title") || "").includes("打开抽屉"));
-      if (btn) btn.click(); else log("找不到抽屉按钮");
+      if (btn) { btn.click(); setTimeout(function () { var tb = [].slice.call(document.querySelectorAll(".domain-tab")).filter(function (x) { return x.textContent.trim() === (drawer === "jobs" ? "" : (drawer === "settings" ? "" : "")); }); var want = drawer === "jobs" ? 1 : drawer === "settings" ? 2 : 0; tb = [].slice.call(document.querySelectorAll(".domain-tab"))[want]; if (tb) tb.click(); log("drawer=" + drawer + " current domain tab=" + (tb ? tb.textContent.trim() : "?")); }, 700); } else log("找不到抽屉按钮");
       if (drawer === "jobs" || drawer === "settings") {
         const tab = [...document.querySelectorAll(".domain-tab")].find((b) => b.textContent.trim() === (drawer === "jobs" ? "运行" : "设置"));
-        if (tab) tab.click();
+        
       }
     }
     log("ready for screenshot");
-  }, 700);
+  }, 2500);
 </script>
 </body>
 </html>
