@@ -660,6 +660,12 @@ export function App() {
             </button>
           ))}
           <span className="spacer" />
+          <button className="domain-act" title="本会话的定时提醒" onClick={() => pickDomain("schedules")}>
+            ⏰ 提醒
+          </button>
+          <button className="domain-act" title="本会话的产出文件" onClick={() => pickDomain("produced")}>
+            ▤ 产出
+          </button>
           <button className="domain-close" title="关闭抽屉（Esc）" onClick={() => setDrawer("")}>
             关闭
           </button>

@@ -1237,3 +1237,15 @@ body { line-height: 1.5; }
 .sheet-title { display: none; }
 .sheet-head > .icon-btn { display: none; }
 .sheet-head:not(:has(.sheet-controls)) { display: none; }
+/* 域 tab 行右端的动作（提醒 / 产出） */
+.domain-act {
+  border: 0; background: none; color: var(--vscode-descriptionForeground);
+  font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 5px; cursor: pointer; flex: none;
+}
+.domain-act:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, .12)); }
+
+/* 抽屉与内容区块撑满整高（原来只有上半段有内容、下半段空白） */
+.sheet { display: flex; flex-direction: column; height: 100%; }
+.sheet-body { flex: 1 1 auto; min-height: 0; }
+.sheet-filters { flex: none; }
+.session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
