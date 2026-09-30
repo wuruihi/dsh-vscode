@@ -119,7 +119,7 @@
     send({ t: "projection", sessionId: "s1", key: "goal", value: { goal: { id: "g1", revision: 3, objective: "把面板 UI 按设计图重构完", phase: "active", maxGoalRounds: 12 }, roundsStarted: 4 } });
     send({ t: "projection", sessionId: "s1", key: "inbox", value: { "next-turn": [{ id: "m1", content: [{ type: "text", text: "先按 B 做，顺便把会话区也重排" }] }, { id: "m2", content: [{ type: "text", text: "截图自检要能切宽窄档" }] }], "next-step": [] } });
     send({ t: "projection", sessionId: "s1", key: "contextPressure", value: { pressure: 0.62 } });
-    send({ t: "tokens", label: "12.4k tokens" });
+    send({ t: "tokens", label: "12.4k tokens" }); if (drawer) window.postMessage({ t: "open-search" }, "*");
     send({ t: "presets", data: { presets: [{ id: "default", name: "默认装配", isDefault: true }] } });
     send({ t: "models", sessionId: "s1", data: { current: { provider: "deepseek", model: "deepseek-v4.1" }, routable: true, groups: [], failures: [] } });
     // 伪造若干工具事件，验证"工具组折叠"
@@ -150,7 +150,7 @@
       }
     }
     log("ready for screenshot");
-  }, 2500);
+  }, 2500); setTimeout(function () { if (window.feed) { window.postMessage({ t: "open-search" }, "*"); } }, 1200);
 </script>
 </body>
 </html>

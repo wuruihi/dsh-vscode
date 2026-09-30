@@ -660,25 +660,26 @@ export function App() {
             </button>
           ))}
           <span className="spacer" />
-          <button className="domain-act" title="后台任务 / 子代理（诊断）" onClick={() => pickDomain("jobs")}>
-            ⚙ 任务
-          </button>
-          <button className="domain-act" title="子代理目录（诊断）" onClick={() => pickDomain("subs")}>
-            ▤ 子代理
-          </button>
-          <button className="domain-act" title="原始事件台账（高级，排障用）" onClick={() => pickDomain("traj")}>
-            🧭 轨迹
-          </button>
-          <button className="domain-act" title="本会话的定时提醒" onClick={() => pickDomain("schedules")}>
-            ⏰ 提醒
-          </button>
-          <button className="domain-act" title="本会话的产出文件" onClick={() => pickDomain("produced")}>
-            ▤ 产出
-          </button>
           <button className="domain-close" title="关闭抽屉（Esc）" onClick={() => setDrawer("")}>
             关闭
           </button>
         </div>
+        {/* 第二层：诊断域内的子 tab（顶层高亮仍是「诊断」，避免"点了任务却选中诊断"的错位） */}
+        {domainOf(drawer) === "jobs" && (
+          <div className="subchips">
+            {(
+              [
+                ["jobs", "任务"],
+                ["subs", "子代理"],
+                ["traj", "轨迹"],
+              ] as const
+            ).map(([d, label]) => (
+              <button key={d} className={`chip${drawer === d ? " on" : ""}`} onClick={() => pickDomain(d)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </>
     );
 
@@ -926,6 +927,7 @@ export function App() {
               归档
             </button>
           </span>
+          <span className="sheet-note">共 {sessions.length} 个会话 · 仅当前工作区</span>
         </div>
         <div className="session-list">
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}

@@ -1249,3 +1249,48 @@ body { line-height: 1.5; }
 .sheet-body { flex: 1 1 auto; min-height: 0; }
 .sheet-filters { flex: none; }
 .session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* 会话域说明行：解释"为什么下面是空的"（仅当前工作区）+ 跨工作区搜索入口 */
+.sheet-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; color: var(--vscode-descriptionForeground);
+}
+
+/* ── 抽屉整高（会话列表只占半屏的真因：抽屉框本身没撑满）────────────────
+   覆盖层是 flex 容器时，align-items:center 会让抽屉按内容高度居中 => 内容少的
+   面板看起来"只占半屏"。强制拉伸 + 抽屉 100% 高度，所有面板行为一致。 */
+.sheet-overlay { align-items: stretch; }
+.sheet { height: 100% !important; max-height: 100% !important; }
+/* ── 修：状态胶囊被长标题挤没（用户"看不到顶部胶囊"）────────────────────
+   标题可收缩、胶囊不收缩，标题过长时省略而不是把胶囊压成 0 宽。 */
+.header-session-row .title-btn { flex: 1 1 auto; min-width: 0; max-width: none; overflow: hidden; }
+.capsule { flex: none; }
+/* ── 修：二级 tab（任务/子代理/轨迹）选中态不可辨 ──────────────────────
+   不再用同一套蓝色填充：未选中＝纯文字，选中＝文字加粗+底部强调线，一眼可辨。 */
+.subchips { display: flex; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .3)); }
+.subchips .chip {
+  background: none; color: var(--vscode-descriptionForeground);
+  border: 0; border-radius: 0; padding: 3px 10px;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+.subchips .chip:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, .12)); }
+.subchips .chip.on {
+  background: none; color: var(--vscode-foreground); font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #4a8cff);
+}
+/* ── 会话列表只占半屏的真因：styles.css 第 74 行的 .session-list{max-height:240px} ──
+   列表在抽屉里应由 .sheet-body 统一滚动，不需要自己的高度上限。 */
+.sheet-body .session-list { max-height: none; }
+
+/* ── 统一"选中态"表达：所有分段控件（域 tab / 二级 tab / 筛选 chip）一套视觉 ──
+   之前每个位置各写一套样式，导致"筛选按钮看不出选中"与"子 tab 看不出选中"同时存在。
+   规则：未选中＝灰字无底；选中＝正常字色 + 加粗 + 底部强调线。 */
+.chip {
+  background: none; color: var(--vscode-descriptionForeground);
+  border: 0; border-radius: 0; padding: 3px 10px;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+.chip:hover { background: none; color: var(--vscode-foreground); }
+.chip.on {
+  background: none; color: var(--vscode-foreground);
+  font-weight: 700; box-shadow: inset 0 -2px 0 var(--vscode-focusBorder, #4a8cff);
+}
