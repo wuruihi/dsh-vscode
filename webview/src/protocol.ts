@@ -133,7 +133,7 @@ export type ExtToView =
   | { t: "queue"; sessionId: string; items: QueueItem[] }
   | { t: "projection"; sessionId: string; key: string; value: unknown }
   | { t: "tokens"; label: string }
-  | { t: "permission"; data: PermissionData }
+  | { t: "permission"; data: PermissionData; sessionId?: string }
   | { t: "presets"; data: PresetData }
   | { t: "inject-attachment"; label: string; text: string }
   | { t: "files"; reqId: number; items: { path: string; rel: string }[] }

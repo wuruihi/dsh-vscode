@@ -16,6 +16,7 @@ import { DshChatView } from "./ui/panel.js";
 import { DiffService } from "./diff/provider.js";
 import { IdeBridge } from "./ide/bridge.js";
 import { searchWorkspaceFiles } from "./context/files.js";
+import { parsePinnedModel } from "./session/model-choice.js";
 import { getLog, log, warn } from "./log.js";
 import type { ViewToExt } from "../webview/src/protocol.js";
 
@@ -100,6 +101,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         instanceLabel: currentInstance ? describeInstance(currentInstance) : baseUrl,
       },
     });
+  }
+
+  /** 写一条插件侧偏好（设置域「常用」四条）。三条纪律：
+   *  ① **作用域**：`defaultModel` 的定位是"每个项目各钉各的模型"（见 package.json
+   *     描述）⇒ 写 **Workspace**（`.vscode/settings.json`），没有工作区才退 Global。
+   *     写 Global 会被工作区值盖住 ⇒ 表现为"点了没反应"的假控件。
+   *  ② **值校验**：`defaultModel` 必须是 `provider/model[/effort]` 且能被
+   *     `parsePinnedModel` round-trip 还原（模型 id 里含 `/` 的写进去会被解析错）。
+   *     空串 = 取消钉选 ⇒ 写 `undefined` 删掉该项，而不是留一个空值。
+   *  ③ **失败可见**：写失败（策略锁定等）必须 notify，不许静默。 */
+  async function setPref(key: "defaultModel" | "autoStart", value: string | boolean): Promise<void> {
+    try {
+      const cfg = vscode.workspace.getConfiguration("dsh-vscode");
+      if (key === "defaultModel") {
+        const raw = typeof value === "string" ? value.trim() : "";
+        if (raw) {
+          const parsed = parsePinnedModel(raw);
+          const ok =
+            !!parsed.choice &&
+            `${parsed.choice.provider}/${parsed.choice.model}${parsed.choice.reasoningEffort ? `/${parsed.choice.reasoningEffort}` : ""}` === raw;
+          if (!ok) {
+            panel.post({ t: "notify", kind: "warn", message: `默认模型格式不支持：${raw}（应为 provider/model）` });
+            return;
+          }
+        }
+        const target = (vscode.workspace.workspaceFolders?.length ?? 0) > 0
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+        await cfg.update("defaultModel", raw || undefined, target);
+      } else {
+        await cfg.update("autoStart", !!value, vscode.ConfigurationTarget.Global);
+      }
+      postPrefs();
+    } catch (err) {
+      panel.post({ t: "notify", kind: "warn", message: `保存设置失败：${String(err).slice(0, 120)}` });
+    }
   }
 
   function wireInstance(instance: DshInstance): void {
@@ -319,15 +356,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "save-setting":
         void manager.saveSetting(m.ns, m.patch, m.revision);
         break;
-      // 设置域「人话四条」：扩展侧偏好（写 VSCode 全局配置）+ 实例切换命令
+      // 设置域「人话四条」：扩展侧偏好的写入 + 实例切换命令（不碰服务器协议）
       case "get-prefs":
         postPrefs();
         break;
       case "set-pref":
-        await vscode.workspace
-          .getConfiguration("dsh-vscode")
-          .update(m.key, m.value, vscode.ConfigurationTarget.Global);
-        postPrefs();
+        await setPref(m.key, m.value);
         break;
       case "select-instance":
         void pickInstance();

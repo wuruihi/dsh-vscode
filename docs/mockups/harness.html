@@ -177,6 +177,16 @@
       const kids = [...hrow.children].map((c) => (c.className || c.tagName) + "=" + Math.round(c.getBoundingClientRect().width)).join(" ");
       log("minContent: headerRow=" + Math.round(hrow.getBoundingClientRect().width) +
           " [" + kids + "] composer=" + Math.round((document.querySelector(".composer")?.getBoundingClientRect().width ?? 0)));
+      const app2 = document.querySelector(".app");
+      if (app2) {
+        const wide = [...app2.children]
+          .map((c) => ({ cls: c.className || c.tagName, w: Math.round(c.getBoundingClientRect().width), sw: c.scrollWidth }))
+          .sort((a, b) => b.w - a.w)
+          .slice(0, 4)
+          .map((x) => x.cls + "=" + x.w + "/" + x.sw)
+          .join(" ");
+        log("minContent children: " + wide);
+      }
       root.style.width = keep;
     }
     log("ready for screenshot");

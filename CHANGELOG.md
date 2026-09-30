@@ -4,15 +4,42 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.21.1 — 复核修正：默认模型作用域 / 权限串台 / 版本横幅身份 / 措辞降级
+
+**流程**：0.21.0 落地后另起**独立子代理**对全量 diff 做对抗性复核（只读、不共享写作上下文）→ 逐条核实（不盲从）→ 本轮修 4 条实质问题 + 修正 2 处文档断言。复核结论：**PASS WITH ISSUES**。
+
+**修的实质问题**
+
+1. **`defaultModel` 写错作用域（假控件）**：该设置的定位是"每个项目各钉各的模型"（`package.json` 描述明写"Set it in the workspace settings"），而 0.21.0 写的是 `ConfigurationTarget.Global` ⇒ ① 工作区已钉值时 Global 写入被盖住，面板回显旧值，用户看到"点了没反应"；② 没钉过时静默写成本机全局，污染所有项目。改：有工作区写 **Workspace**，否则 Global；空串 = 取消钉选 ⇒ 写 `undefined` 删项；一侧失败 `notify`。
+2. **`provider/model` 表达不了含 `/` 的模型 id**：`parsePinnedModel` 把第 3 段当 `reasoningEffort`，而 asar 的模型定义里确有 `anthropic/claude-3-haiku` 这类 id ⇒ 写进去必然解析错、新会话落到"应用失败"告警。改：候选清单过滤掉 provider/model 含 `/` 的项（当前值仍以只读项呈现），宿主写入前再用 `parsePinnedModel` 做 round-trip 校验，不等值即拒绝并 notify。
+3. **权限控件会话串台**（既有面，本轮把它搬上第一屏后更明显）：`permission` 帧不带 sessionId，切到"没有 permissions 投影"的会话时控件停在上一个会话的预设上。改：帧带 `sessionId`（可选，旧宿主退化为原行为）+ webview 记录来源会话，`permSessionId !== current` 的数据一律不渲染。
+4. **`set-pref` 无白名单/无 try-catch**：key 加白名单（`defaultModel`/`autoStart`），写入失败可见。
+
+**文档措辞降级（复核指出原断言过强）**
+
+- 0.21.0 写的"`dist/webview.js` 的 URI 每次重装后**完全不变**"**不成立**：VS Code 按版本分目录安装（本机 18 个历史安装位），跨版本重装时 path 本身就变；"URI 不变 + 缓存"只成立于**同版本号原地覆盖**（正是开发循环里踩过的坑）或 SW 缓存映射仍指向旧目录。已在 `design.md` §3.8、`AGENTS.md`、本条与 0.21.0 条目统一改为该准确表述，`?v=` 保留为兜底。
+- **版本横幅身份**：0.21.0 只有宿主 HTML 里的一行，打印的是**宿主版本**，旧 bundle 也会打印新版本号 ⇒ 不能用来判断"我看的是哪一版"。改：esbuild `define` 注入 `__DSH_WEBVIEW_VERSION__`，`webview/src/main.tsx` 打印 **bundle 自己的版本**，宿主那行改标 `host html v…`。排障时以 bundle 那行为准。
+
+**同时确认的复核结论（不改）**
+
+- `.chip` 仍被指"依赖 badge 变量"⇒ **误报**：追加区（`styles.css` 末段统一选中态）已把 `.chip` 覆盖为 `background:none; color:--vscode-descriptionForeground`，截图里权限 chip 清晰可辨。
+- harness 三参数与诊断行、删掉强制 `open-search`：复核确认无语法/逻辑错误。
+- 布局侧复核给出了比原作者更强的论据（`.capsule` 为 `flex:none` 且排在 `spacer`/`⋯` 之前 ⇒ 挤压顺序是"标题→spacer→⋯"，胶囊是最后才可能被裁掉的元素），与"220px 下胶囊仍完好"的截图一致。
+
+**验证**：`pnpm compile` 0 错；`pnpm build`；`regress:all` 全绿（102/102）；`args:audit` 0 处不匹配；截图矩阵重拍（`docs/mockups/shots/v211-*`）。
+
 ## v0.21.0 — 设置页瘦身 + 状态胶囊加固 + webview 资源版本（接 `docs/ui-handoff.md` §6 三件）
+
+> **注**：本条 P0 的"真因"措辞已在 **v0.21.1** 复核后降级为"候选原因"（见上条）。保留原文以便追溯当时判断。
 
 **流程**：读交接文档 → 先复现/证伪 P0 → 按三件待办逐一改 → 截图矩阵核对（220/340/460/680 档 + 三种抽屉）。
 
-**P0「顶部状态胶囊看不见」= 不是布局问题，是版本没换（机制修复）**
+**P0「顶部状态胶囊看不见」= 布局无问题；两条候选原因分别加固**
 
-- **复现尝试**：harness 加 `long=1`（超长会话标题）与 `goal=0`（无目标态），在 220/260/300/340/680px 逐档截图 + 量 `app.scrollWidth` / `headerRow.scrollWidth` / 胶囊 rect ⇒ **布局全绿**（长标题正常省略，胶囊与 `⋯` 始终在可视区内）。判定：0.20.6 的"标题可收缩"已生效，用户看到的是**上一版 bundle**。
-- **真因（第一性原理）**：`dist/webview.js` 的 URI 每次重装后完全不变，而 VS Code 对 webview 资源有缓存 ⇒ 升级扩展后面板可能继续执行**旧** bundle。修：`asWebviewUri(...).with({query:"v=<version>"})` + 首行 `console.log("[dsh-vscode] webview bundle v…")`（截图/日志可直接回答"我看的是哪一版"）。
-- **胶囊主题加固**：字色改 `--vscode-foreground`、底色/描边由前景色 `color-mix` 派生（带固定灰降级），不再依赖主题是否成对定义 badge 变量 ⇒ 亮/暗主题都不可能"消失"（历史 bug：蓝字叠蓝底）。
+- **复现尝试**：harness 加 `long=1`（超长会话标题）与 `goal=0`（无目标态），在 220/260/300/340/680px 逐档截图 + 量 `app.scrollWidth` / `headerRow.scrollWidth` / 胶囊 rect ⇒ **布局全绿**（长标题正常省略，胶囊与 `⋯` 始终在可视区内）。判定：0.20.6 的"标题可收缩"已生效。
+- **候选原因一（有据）**：胶囊原依赖 `--vscode-badge-background/foreground`，用户主题下曾"蓝字叠蓝底"不可辨 ⇒ 改为不依赖 badge 变量（见下一条）。
+- **候选原因二（推测）**：同版本号覆盖安装时 `dist/webview.js` 的 URI 不变，VS Code 资源缓存可能继续服务旧 bundle ⇒ 加 `?v=<版本号>` 兜底。
+- **胶囊主题加固**：字色改 `--vscode-foreground`、底色/描边由前景色 `color-mix` 派生（带固定灰降级），不再依赖主题是否成对定义 badge 变量 ⇒ 亮/暗主题都不可能"消失"。
 - **证据**：computed style `bg=color(srgb .8 .8 .8/.12) color=rgb(204,204,204) border=(.32)`；4 档头部截图胶囊均可见。
 
 **P2 抽屉截图钩子**：`app.tsx` 加 `?drawer=sessions|jobs|settings|…`（白名单取值，仅截图环境带该参数 ⇒ 生产行为不变）；harness 删掉"代点按钮"的脆弱实现与"每次截图都强制开搜索抽屉"的杂散代码，新增布局/胶囊色诊断行（`--dump-dom` 可读）。已拍 sessions / settings / jobs 三张抽屉图。
@@ -21,7 +48,7 @@
 
 - 第一屏＝**四条人话设置**：**默认模型**（模型目录下拉；拿不到目录时只读 +「去 VSCode 设置改」，不放假控件）· **本会话权限**（`permission` 投影的分段按钮，文案写明是**会话级**）· **连哪个 DSH 实例**（`describeInstance` + 「切换…」复用 `DSH: Select DSH Instance`）· **找不到实例时自动打开桌面版**（勾选）。
 - 原 schema 表单整块收进「高级（服务器设置）」`<details>`，**默认收起**；只读/未开放的提示移入其中。
-- 协议新增（**扩展↔webview**，不碰 DSH 协议）：`{t:"prefs"}` / `{t:"get-prefs"}` / `{t:"set-pref"}` / `{t:"select-instance"}`；写 `dsh-vscode.*` 走宿主 `config.update(Global)`，配置变化即时回显。
+- 协议新增（**扩展↔webview**，不碰 DSH 协议）：`{t:"prefs"}` / `{t:"get-prefs"}` / `{t:"set-pref"}` / `{t:"select-instance"}`（**作用域**：`defaultModel` 写 Workspace —— 0.21.0 误写 Global，见 v0.21.1 第 1 条修复）。
 - 底部两个出口：打开 DSH 本体设置（GUI）/ VSCode 设置页。
 
 **验证**：`pnpm compile` 双 tsconfig 0 错；`pnpm build` 产出；`regress:all` 全绿（fold 24/24、fence 8/8、pathlink 8/8、locate 25/25、model 23/23、repair 14/14）；`args:audit`（桌面版 0.2.0 asar）**0 处不匹配**；`node --check dist/extension.cjs` 通过；截图矩阵 7 张（`docs/mockups/shots/v210-*`）。

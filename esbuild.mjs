@@ -1,6 +1,9 @@
 import * as esbuild from "esbuild";
+import { readFileSync } from "node:fs";
 
 const watch = process.argv.includes("--watch");
+/** 版本号注入 webview bundle：日志里能区分"宿主 HTML 的版本"与"真正在跑的 bundle 版本"。 */
+const pkgVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
 
 /** Extension host bundle (CommonJS, external vscode). MUST be .cjs: the
  *  package.json carries "type":"module" for tooling, which would otherwise
@@ -30,6 +33,7 @@ const webview = {
   sourcemap: false,
   minify: true,
   loader: { ".css": "text" },
+  define: { __DSH_WEBVIEW_VERSION__: JSON.stringify(pkgVersion) },
   logLevel: "info",
 };
 

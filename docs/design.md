@@ -173,7 +173,10 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 - 底部两个出口：`{t:"open-browser"}`（打开 DSH 本体 GUI，服务器设置在那里）与 `{t:"open-settings"}`（VSCode 设置页：地址/认证/路径）。
 - 偏好变更（`onDidChangeConfiguration` 命中 `defaultModel` / `autoStart`）即时 `postPrefs()` 回显；实例身份用 `describeInstance(currentInstance)` + `baseUrlPinned`（显式 baseUrl 时标明"已手动指定"）。
 
-**webview 资源必须带版本查询串**（真 bug 的机制修复，`ui/panel.ts`）：`dist/webview.js` 的 URI 在每次重装后**完全不变**，VS Code 侧有资源缓存 ⇒ 升级扩展后面板可能继续执行**上一版** bundle（用户两次报"界面没变"：0.19.5 原地覆盖、0.20.6 后仍称"状态胶囊看不到"）。修法：`asWebviewUri(...).with({query: "v=" + extension.packageJSON.version})` + 首行 `console.log("[dsh-vscode] webview bundle v…")` 让截图/日志能直接回答"我现在看的是哪一版"。**配套纪律不变**：装 vsix 必须升版本号（同版本号覆盖 VS Code 不重载）。
+**webview 资源带版本查询串**（`ui/panel.ts`）：`dist/webview.js` 在**同版本号原地覆盖安装**时 URI 完全不变，而 VS Code 侧有资源缓存（含 service worker 层）⇒ 面板可能继续执行**上一版** bundle。**注意**：跨版本安装时 VS Code 会换版本目录、资源 path 本身会变，所以这条只覆盖"同版本覆盖 + Reload 后仍按旧映射服务"这一类（正是开发循环里反复踩的）；无论哪种，`?v=` 都是无副作用的兜底（service worker 会把 query 透传给资源加载，`localResourceRoots` 只校验 path、CSP 的 `cspSource` 是 host 级来源不经 query）。
+
+- 身份判据要**分层**：宿主 HTML 里的版本号只能证明宿主版本，旧 bundle 也会打印它；真正的 bundle 身份由构建期注入的 `__DSH_WEBVIEW_VERSION__`（`esbuild.mjs` define → `webview/src/main.tsx` 首行打印）回答。排障"改了没生效"时以 `[dsh-vscode] webview bundle v…` 为准。
+- **配套纪律不变**：装 vsix 必须升版本号（同版本号覆盖 VS Code 不重载扩展）。
 
 ## 4. 功能规格
 

@@ -529,7 +529,9 @@ export class SessionManager {
           .filter((o: { id: string }) => o.id)
       : [];
     if (value || opts.length > 0) {
-      this.host.post({ t: "permission", data: { value, revision: null, presets: opts } });
+      // sessionId 一并下发：权限是**会话级**的，webview 侧据此作废旧会话的值，
+      // 否则切到"没有 permissions 投影"的会话时控件会停留在上一个会话的预设上。
+      this.host.post({ t: "permission", sessionId, data: { value, revision: null, presets: opts } });
     }
   }
 

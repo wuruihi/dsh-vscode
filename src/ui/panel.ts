@@ -88,8 +88,9 @@ export class DshChatView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
   window.addEventListener("error", function(e){ show(e.message + (e.filename ? " @" + e.filename.split("/").pop() + ":" + e.lineno : "")); });
   window.addEventListener("unhandledrejection", function(e){ show("promise: " + ((e.reason && e.reason.message) || e.reason)); });
-  // Version banner: makes "which build am I looking at" answerable from a screenshot.
-  console.log("[dsh-vscode] webview bundle v${version}");
+  // Host-side banner: this is the EXTENSION HOST's version (this HTML), NOT proof
+  // about which webview bundle runs — main.tsx prints the bundle's own version.
+  console.log("[dsh-vscode] host html v${version}");
   setTimeout(function(){
     var r = document.getElementById("root");
     if (!r || !r.hasChildNodes()) show("webview 3 秒内未渲染任何内容（bundle 未执行或渲染崩溃）");

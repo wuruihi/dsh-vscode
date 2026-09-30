@@ -116,6 +116,10 @@ export function App() {
   const [notify, setNotify] = useState<{ kind: string; message: string } | undefined>();
   const [mode, setMode] = useState<"queue" | "steer">("queue");
   const [permission, setPermission] = useState<PermissionData | undefined>();
+  /** permission 帧来自哪个会话：权限是**会话级**的（不是全局设置）。切会话后
+   *  旧值必须作废——新会话若没有 permissions 投影，控件会停在上一会话的预设上，
+   *  看起来"权限是我设的"却写给了当前会话（2026-09-30 复核发现的串台面）。 */
+  const [permSessionId, setPermSessionId] = useState<string | undefined>();
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
   const [drawer, setDrawer] = useState<DrawerId>(initialDrawer);
@@ -188,6 +192,8 @@ export function App() {
     () => (showArchived ? hits : hits.filter((h) => !h.archived)),
     [hits, showArchived],
   );
+  /** 只有"就是当前会话"的权限数据才允许渲染控件（见 permSessionId 注释）。 */
+  const sessionPermission = permSessionId !== undefined && permSessionId === current ? permission : undefined;
 
   // 需求三 UI：抽屉只有「会话 / 运行 / 设置」三个域（工作区不再是并列入口，
   // 而是「会话」域里的一个分组）。域 tab 常驻抽屉顶部，建立"去哪找东西"的记忆。
@@ -305,7 +311,10 @@ export function App() {
           setModels(m.data);
           break;
         case "permission":
+          // 只认当前会话的帧（旧宿主不带 sessionId ⇒ 退化为原行为）
+          if (m.sessionId && current && m.sessionId !== current) break;
           setPermission((prev) => (prev && prev.presets.length > 0 ? { ...m.data, presets: prev.presets } : m.data));
+          setPermSessionId(m.sessionId ?? current);
           break;
         case "presets":
           setPresetData(m.data);
@@ -458,6 +467,15 @@ export function App() {
     post({ t: "ready" });
     return () => window.removeEventListener("message", handler);
   }, [current]);
+
+  // ?drawer= 钩子（截图自检）走的是 state 初值，绕过了 pickDomain 的"打开即取数"，
+  // 这里补一次请求，让截图路径与真实点击路径拉同一批数据。生产 webview 的 URL
+  // 没有该参数 ⇒ 不触发。
+  useEffect(() => {
+    if (initialDrawer() !== "settings") return;
+    post({ t: "get-settings" });
+    post({ t: "get-prefs" });
+  }, []);
 
   useEffect(() => {
     const openDiff = (e: Event) => {
@@ -1545,7 +1563,7 @@ export function App() {
             data={settingsData}
             prefs={prefs}
             models={models}
-            permission={permission}
+            permission={sessionPermission}
             sessionId={current}
             edits={settingsEdits}
             error={settingsError}
@@ -2006,20 +2024,20 @@ export function App() {
               if (cur) post({ t: "select-model", sessionId: current, provider: cur.provider, model: cur.model, reasoningEffort: effort });
             }}
           />
-          {permission && permission.presets.length > 0 && (
+          {sessionPermission && sessionPermission.presets.length > 0 && (
             <select
               className="chip-btn"
-              value={permission.value ?? ""}
+              value={sessionPermission.value ?? ""}
               title="权限预设（当前会话，立即生效）"
               onChange={(e) => {
                 const v = e.target.value;
                 if (v && current) post({ t: "set-session-permission", sessionId: current, preset: v });
               }}
             >
-              {permission.value && !permission.presets.some((p) => p.id === permission.value) && (
-                <option value={permission.value}>{permission.value}</option>
+              {sessionPermission.value && !sessionPermission.presets.some((p) => p.id === sessionPermission.value) && (
+                <option value={sessionPermission.value}>{sessionPermission.value}</option>
               )}
-              {permission.presets.map((p) => (
+              {sessionPermission.presets.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
@@ -2195,8 +2213,15 @@ function SettingsSheet({
   onOpenBody: () => void;
 }) {
   // 默认模型下拉的候选：宿主 models 目录（provider 分组）→ 设置值格式 "provider/model"。
+  // **带斜杠的 provider/model id 不进候选**：设置值只有 `/` 一种分隔符
+  // （`parsePinnedModel` 把第 3 段当 reasoningEffort），`a/b` 这类 id 写进去必然被
+  // 解析错（复核发现：asar 的模型定义里存在 `anthropic/claude-3-haiku` 这种 id）。
+  // 选不了 ≠ 看不到：当前值仍以只读选项呈现。
+  const canExpress = (s: string) => !!s && !s.includes("/");
   const modelOptions = (models?.groups ?? []).flatMap((g) =>
-    (g.models ?? []).map((m) => ({ value: `${g.id}/${m.id}`, label: `${m.name ?? m.id}（${g.name ?? g.id}）` })),
+    (g.models ?? [])
+      .filter((m) => canExpress(g.id) && canExpress(m.id))
+      .map((m) => ({ value: `${g.id}/${m.id}`, label: `${m.name ?? m.id}（${g.name ?? g.id}）` })),
   );
   const advanced = data?.namespaces ?? [];
   return (
@@ -2213,7 +2238,7 @@ function SettingsSheet({
             <div className="pref-row">
               <div className="pref-head">
                 <span className="pref-name">默认模型</span>
-                <span className="pref-hint">只影响新建会话；已有会话各用自己选的模型</span>
+                <span className="pref-hint">只影响本项目的新会话（写 .vscode/settings.json）；已有会话各用自己选的模型</span>
               </div>
               <div className="pref-ctl">
                 {modelOptions.length > 0 ? (
@@ -2300,7 +2325,7 @@ function SettingsSheet({
       {/* 二、出口：插件设置与本体设置分家 —— 这几条管的是插件，服务器设置在本体里 */}
       <div className="settings-exits">
         <button className="link-btn" onClick={onOpenBody}>
-          ↗ 打开 DSH 本体设置（桌面版 GUI 的「设置」）
+          ↗ 打开 DSH 本体（服务器设置在本体 GUI 的「设置」里）
         </button>
         <button className="link-btn" onClick={onOpenExtSettings}>
           ↗ VSCode 设置页（连接地址 / 认证 / node 路径）

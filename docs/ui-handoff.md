@@ -23,27 +23,31 @@
 
 ## 2. 当前版本与状态
 
-- 版本 **0.21.0**（`dsh-web-vscode-0.21.0.vsix`）
-- 工作区**未 push**；回归全绿；`args:audit` 0 漂移（43 覆盖点）；截图矩阵 7 张（`docs/mockups/shots/v210-*`）
-- **待用户确认（唯一开口）**：装 0.21.0 后 Reload Window，头部状态胶囊是否出现
+- 版本 **0.21.1**（`dsh-web-vscode-0.21.1.vsix`，已装；0.21.0 是同日上一版）
+- 工作区**未 push**；回归全绿（102/102）；`args:audit` 0 漂移（43 覆盖点）；截图矩阵 `docs/mockups/shots/v211-*`（+ 0.21.0 的 `v210-*`）
+- 0.21.0 落地后做过一次**独立子代理对抗性复核**（只读、不共享写作上下文）→ 结论 PASS WITH ISSUES → 0.21.1 修了 4 条实质问题 + 降级 2 处过强断言（详见 CHANGELOG v0.21.1）
+- **待用户确认（唯一开口）**：装 0.21.1 后 Reload Window，头部状态胶囊是否出现
 
 ## 3. 已完成
 
 **第一轮（0.19.5–0.20.6）**：单行头部 · 状态胶囊（goal 浮层、无目标零占行）· 工具组折叠 · 抽屉域 tab · 会话域筛选 chip · 二级 tab · 预设下沉 · 会话行 `⋯` 菜单 · 移除 👍👎 与 role 行 · 窄档媒体查询（<520px）· 宽档抽屉停靠（≥620px）· 字阶/行距按本体令牌统一 · 统一分段控件选中态
 
 **第二轮（0.21.0，接本文件 §6 三件全做完）**：
-- **P0 状态胶囊看不到** → 判定**不是布局问题**（220/260/300/340/680px 逐档截图 + 量 `scrollWidth`/胶囊 rect 全绿，0.20.6 的"标题可收缩"已生效）；真因是 **`dist/webview.js` 的 URI 跨重装不变 + VS Code 资源缓存** ⇒ 用户看的是旧 bundle。修：webview URI 带 `?v=<版本号>` + 首行打印 bundle 版本；顺带把胶囊做成**主题无关**（字色 `--vscode-foreground`、底色/描边由前景色 color-mix 派生）
-- **P2 抽屉截图钩子** → `app.tsx` 支持 `?drawer=sessions|jobs|settings|…`（白名单）；harness 删掉"代点按钮"与"每次截图强制开搜索抽屉"的杂散代码
+- **P0 状态胶囊看不到** → 判定**布局无问题**（220/260/300/340/680px 逐档截图 + 量 `scrollWidth`/胶囊 rect 全绿，0.20.6 的"标题可收缩"已生效；复核另给结构论据：胶囊 `flex:none` 且排在 `spacer`/`⋯` 之前 ⇒ 挤压顺序是"标题→spacer→⋯"）。两条候选原因分别加固：①**主题**（原依赖 `--vscode-badge-*`，用户主题下曾"蓝字叠蓝底"）⇒ 字色改 `--vscode-foreground`、底色/描边由前景色 color-mix 派生；②**bundle 版本**（同版本覆盖安装时 URI 不变 + 资源缓存）⇒ URI 带 `?v=<版本号>`
+- **P2 抽屉截图钩子** → `app.tsx` 支持 `?drawer=sessions|jobs|settings|…`（白名单；并在挂载时补一次 `get-settings`/`get-prefs`，让截图路径与真实点击拉同一批数据）；harness 删掉"代点按钮"与"每次截图强制开搜索抽屉"的杂散代码
 - **P1 设置瘦身** → 第一屏四条人话设置（默认模型 / 本会话权限 / 连哪个实例 / 找不到时自动打开桌面版）+ 两个出口 + schema 表单收进「高级」默认收起；协议新增 `prefs` / `get-prefs` / `set-pref` / `select-instance`（仅扩展↔webview）
+
+**第三轮（0.21.1，复核修正）**：`defaultModel` 作用域改 **Workspace**（原来写 Global 会被工作区值盖住 ⇒ 假控件；空串＝取消钉选写 `undefined`）· 模型目录里 provider/model 含 `/` 的项不进下拉 + 写入前 `parsePinnedModel` round-trip 校验 · `permission` 帧带 `sessionId`、webview 侧按来源会话作废（修串台）· `set-pref` 白名单 + 失败 notify · 版本横幅分两层（宿主 `host html v…` / bundle `webview bundle v…`，构建期注入）· `.header { overflow:hidden }` 兜底
 
 ## 4. 未完成 / 开口项
 
 | 优先级 | 事项 | 现状 |
 |---|---|---|
-| **P0** | 状态胶囊**用户侧**确认 | 机制已修（见 §3），等用户 Reload 后确认；若仍不出现，先要头部截图 + `DSH: Show Logs` 里的 `[dsh-vscode] webview bundle v…` 行 |
+| **P0** | 状态胶囊**用户侧**确认 | 布局与主题两条已实测排除/加固；等用户 Reload 后确认。若仍不出现，先要：①头部截图 ②`DSH: Show Logs` 里 `[dsh-vscode] webview bundle v…` 那行（bundle 身份，宿主那行不作数） |
 | P1 | 宽档停靠时画布被压 | 编辑区标签页 ≥620px 时 wide 抽屉占 620px ⇒ 画布只剩 ~280px；未动 |
-| P2 | 窄档外观核对 | 220/340px 截图已看，未与用户逐项确认 |
-| P3 | 设置页"默认模型"下拉 | 依赖模型目录已到（`get-models`）；目录为空时降级成只读 + 「去 VSCode 设置改」 |
+| P2 | 窄档下限 | **实测**：面板 <200px 时 `.app` 的 min-content ≈194px（由 messages/composer 的不可断内容决定），头部右端会被推出可视区（140px 截图可见胶囊被裁）；VS Code 侧栏最小宽度大于该值、更窄时面板本身不可用 ⇒ 未做专项断点，头部加了 `overflow:hidden` 兜底 |
+| P3 | 模型 id 含 `/` 的模型 | 钉选默认模型只能选 provider/model 均不含 `/` 的项（设置值格式限制），这类模型在设置页选不了（会误解析）；根治需把 pin 改成两字段 |
+| P4 | 设置页"默认模型"下拉 | 依赖模型目录已到（`get-models`）；目录为空时降级成只读 + 「去 VSCode 设置改」 |
 
 ## 5. 验证与工具（含踩过的坑）
 
@@ -67,22 +71,27 @@ $exe="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"   # 必须�
 ```
 - **面板宽由 `?w=` 决定，不要靠 `--window-size` 调窄**（headless 下 window-size ≠ 布局 viewport，会得到假的"溢出"截图）。窗口给大（900+），面板给 220–680。
 - 查询参数：`w`（面板宽）· `drawer=sessions|jobs|settings|…`（直接开抽屉）· `long=1`（超长标题）· `goal=0`（不发 goal 投影 ⇒ 胶囊"设目标"态）
-- 诊断（`--dump-dom` 里读 `#log`）：`layout:`（viewport / root.clientW / app.scrollW / headerRow.scrollW / capsule.right）、`minContent:`（强行压到 120px，看谁不肯收缩）、`capsule style:`（实际生效色）
+- 诊断（`--dump-dom` 里读 `#log`）：`layout:`（viewport / root.clientW / app.scrollW / headerRow.scrollW / capsule.right）、`minContent:`（强行压到 120px，看谁不肯收缩 + 各子块宽度）、`capsule style:`（实际生效色）
+
+**判据（0.21.1 实测钉死，别再凭感觉争论布局）**
+- 胶囊是否在可视区：`capsule.right ≤ root.clientW`。**实测**面板 220px 起一切正常；<200px 时 `.app` 的 min-content ≈194px（messages/composer 的不可断内容）会把头部右端推出可视区，140px 截图可见胶囊被裁。
+- "我看的是哪一版"：只认日志里 `[dsh-vscode] webview bundle v…`（构建期注入的 bundle 身份）；`host html v…` 是宿主版本，旧 bundle 也会打印新值。
 
 **坑清单（都踩过）**
-1. **同版本号覆盖安装不会被 VS Code 重新加载** ⇒ 每次安装必须**升版本号**；现在 webview 资源额外带 `?v=` 版本串（§3 P0）
+1. **同版本号覆盖安装不会被 VS Code 重新加载** ⇒ 每次安装必须**升版本号**（跨版本安装会换版本目录，但同版本覆盖时资源 URI 不变 + 存在缓存层，故 webview URI 另带 `?v=` 兜底）
 2. esbuild 不校验类型 ⇒ 打包前必须 `pnpm compile` 0 错
-3. **JSX 里的 `/* … */` 是文本节点**，会显示在界面里
+3. **JSX 里的 `/* … */` 是文本节点**，会显示在界面里（Markdown 的 `**粗体**` 同理，会原样显示 → 文案里别写 Markdown）
 4. 历史遗留规则在 `styles.css` 前部（如 `.session-list{max-height:240px}`），覆盖关系看文件末尾追加区
 5. harness 内联脚本语法错误 ⇒ 整页白屏；看 `JS 已执行` 标记 + 顶部错误横幅
 6. 浏览器里看不到 console ⇒ 页面内置诊断行 + `--dump-dom` 读 `#log`
+7. `pnpm package` 在本机 shell 里会因 `pnpm` 不在 PATH 而失败 ⇒ 直接 `node esbuild.mjs` + `node node_modules\@vscode\vsce\vsce package --no-dependencies`（注意是 `vsce` 这个 shim，不是 `out/main.js`——后者只是导出函数，跑它等于啥也没干、还 exit 0）
 
 ## 6. 接手先做什么
 
-1. 先问用户 0.21.0 的**胶囊确认结论**（含截图 / bundle 版本号）；这是唯一可能还没闭环的点。
-2. 若用户报新问题：**先按 §5 截图复现**（能复现再动手，别凭推测改 CSS）。
-3. P1 宽档停靠（画布 280px）与 P2 窄档核对，按用户反馈优先级做。
-4. 每次改动：`compile` → `build` → `regress:all` → 截图自检 → 升版本号打包 → CHANGELOG 追加。
+1. 先问用户 0.21.1 的**胶囊确认结论**（含截图 / bundle 版本号）；这是唯一可能还没闭环的点。
+2. 若用户报新问题：**先按 §5 截图复现**（能复现再动手，别凭推测改 CSS），改动后跑 §5 的判据。
+3. §4 里 P1（宽档停靠画布 280px）/ P3（含 `/` 的模型 id 钉选）按用户反馈优先级做。
+4. 每次改动：`compile` → `build` → `regress:all` → 截图自检 → 升版本号打包 → CHANGELOG 追加；**非平凡改动建议起一个独立子代理复核**（本轮就是这么抓出 4 条实质问题的）。
 
 ## 7. 相关文件
 
