@@ -886,7 +886,7 @@ export function App() {
             .map((s) => (
             <div
               key={s.sessionId}
-              className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
+              className={`session-row ${s.sessionId === current ? "is-current" : ""}${rowMenu === s.sessionId ? " menu-open" : ""}`}
               onClick={() => {
                 setDrawer("");
                 setUnread((u) => {
@@ -1160,7 +1160,7 @@ export function App() {
               return (
                 <div
                   key={s.sessionId}
-                  className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
+                  className={`session-row ${s.sessionId === current ? "is-current" : ""}${rowMenu === s.sessionId ? " menu-open" : ""}`}
                   title={s.cwd ?? s.sessionId}
                   onClick={() => openSession(s.sessionId)}
                 >
