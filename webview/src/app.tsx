@@ -106,6 +106,8 @@ export function App() {
   const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
+  /** 会话列表筛选（需求三 UI）：只显示运行中。 */
+  const [runningOnly, setRunningOnly] = useState(false);
   const [killConfirm, setKillConfirm] = useState<string | null>(null);
   /** 需求三第三批：当前会话的 active 提醒（schedule/list 裸数组；无 nextRunAt）。 */
   const [schedules, setSchedules] = useState<
@@ -795,10 +797,32 @@ export function App() {
                 value={sessQuery}
                 onChange={(e) => setSessQuery(e.target.value)}
               />
-              <label className="archive-toggle" title="归档会话默认隐藏">
-                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-                显示归档
-              </label>
+              <span className="chips">
+                <button
+                  className={`chip${!showArchived && !runningOnly ? " on" : ""}`}
+                  title="全部会话（归档默认隐藏）"
+                  onClick={() => {
+                    setShowArchived(false);
+                    setRunningOnly(false);
+                  }}
+                >
+                  全部
+                </button>
+                <button
+                  className={`chip${runningOnly ? " on" : ""}`}
+                  title="只看正在运行的会话"
+                  onClick={() => setRunningOnly((v) => !v)}
+                >
+                  运行中
+                </button>
+                <button
+                  className={`chip${showArchived ? " on" : ""}`}
+                  title="显示已归档会话"
+                  onClick={() => setShowArchived((v) => !v)}
+                >
+                  归档
+                </button>
+              </span>
             </>
           }
         >
@@ -806,6 +830,7 @@ export function App() {
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}
           {sessions
             .filter((s) => showArchived || !wsArchived.has(s.sessionId))
+            .filter((s) => !runningOnly || s.running)
             .filter((s) => {
               const q = sessQuery.trim().toLowerCase();
               return !q || `${s.title ?? ""} ${s.cwd ?? ""}`.toLowerCase().includes(q);
@@ -1872,7 +1897,6 @@ function ItemView({ item, sessionId }: { item: FoldItem; sessionId?: string }) {
   if (item.kind === "user") {
     return (
       <div className="msg user">
-        <div className="msg-role">你</div>
         {item.text ? <div className="bubble user-bubble">{item.text}</div> : null}
         {item.files && item.files.length > 0 && (
           <div className="msg-files">
@@ -2172,7 +2196,7 @@ const TurnView = ({ item, sessionId }: { item: TurnItem; sessionId?: string }) =
           </div>
         </div>
       )}
-      <div className="msg-role">DSH</div>
+      /** 需求三 UI：不再显示 role 行（气泡/左侧竖线已表明身份），每条省一行。 */
       {segs.map((s, i) => {
         if (s.kind === "thinking") {
           const t = stripSystemContext(s.text ?? "");
