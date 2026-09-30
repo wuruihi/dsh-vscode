@@ -51,7 +51,10 @@ pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例
   truth，与插件实际发出的四处逐条比对：`client.ts` 的 `v012Request` 调用点、
   `remote.ts` 的 `openStream` 流开帧、`client.ts` 的 `{request}` 包裹集合
   `wrapped` 与会话级写集合 `SESSION_SCOPED_WORKSPACE_WRITES`（后两处
-  2026-09-30 补，第四处随需求三第一批加入；覆盖点 29 = 11 + 6 + 8 + 4）。
+  2026-09-30 补，第四处随需求三第一批加入；覆盖点 **40** = 19 + 7 + 10 + 4）。
+  **注意：从 `manager.ts` 用 `client.call("x.y")` 发出、且 `client.ts` 没有显式
+  分支的方法不在审计范围**——新端点必须在 `client.ts` 写显式分支（字面量）才算被
+  覆盖（2026-09-30 需求三第二批的 8 个 goal/子代理端点即为此补写）。
   漂移即非零退出；不连服务器、不需
   token。`DSH_ROOT` 可覆盖解析目录。**已知并在代码里显式降级的漂移走
   `HANDLED_DRIFT` 白名单**（当前只有 `subagents/list`：0.2.0 已移除，插件首次

@@ -27,7 +27,7 @@
 
 - `pnpm compile` 双 tsconfig exit 0；`pnpm build` exit 0
 - `pnpm regress:all`：fold **24/24**、fence 8/8、pathlink 8/8、locate 25/25（1 例真实机器集成用例环境 skip）、model 23/23、repair 14/14
-- `pnpm args:audit`（桌面版 0.2.0 asar）：**0 处不匹配**，覆盖点 **29 → 32** ＝ 11 `v012Request` + 7 流开帧（+`job/list`）+ 10 `{request}` 包裹（+`subagents.prompt`、`job.kill`）+ 4 会话级写集合
+- `pnpm args:audit`（桌面版 0.2.0 asar）：**0 处不匹配**，覆盖点 **29 → 40** ＝ 19 `v012Request` 调用点（+8：`session/projections`、`subagents/interruptByParent`、`goals/create|edit|pause|resume|complete|clear` 各写成字面量分支） + 7 流开帧（+`job/list`）+ 10 `{request}` 包裹（+`subagents.prompt`、`job.kill`）+ 4 会话级写集合。**注意**：`client.call(...)` 从 `manager.ts` 发出的、未在 `client.ts` 写显式分支的方法不在审计范围——这正是本次把 8 个 goal/子代理端点补成显式分支的原因。
 - `pnpm smoke --base-url http://127.0.0.1:19387 --from-credentials`：**16/16**，新增两条只读断言实测 —— `session/projections carries subagentCatalog + agentTeam — 20 keys`、`job/list opens as a stream and answers rows — type=rows`；测试会话已归档、文件已清理，**无残留**
 
 **待用户手测**：① 子代理抽屉非空、点开有转录 ② 追问 + 打断各一条 ③ 计划评审（按上面三条判据）④ Goal 建/暂停/继续/完成/清空 ⑤ 后台任务出现 + 终止 + 落盘输出可点 ⑥ 无实例时的提示不再出现失效的"启动旧版"动作

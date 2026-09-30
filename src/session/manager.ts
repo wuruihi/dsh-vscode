@@ -930,8 +930,16 @@ export class SessionManager {
     ref: { id: string; revision: number },
   ): Promise<void> {
     const labels: Record<string, string> = { pause: "暂停", resume: "继续", complete: "完成", clear: "清空" };
+    // Literal method names (not `goals.${action}`): client.ts maps each one
+    // explicitly so `pnpm args:audit` can see them as call sites.
+    const method = {
+      pause: "goals.pause",
+      resume: "goals.resume",
+      complete: "goals.complete",
+      clear: "goals.clear",
+    }[action];
     try {
-      await this.lifecycle.client.call(`goals.${action}`, { agentId: this.currentSession, ref });
+      await this.lifecycle.client.call(method, { agentId: this.currentSession, ref });
     } catch (err) {
       this.host.post({ t: "notify", kind: "error", message: `目标${labels[action] ?? action}失败：${errText(err)}` });
     }

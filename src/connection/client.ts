@@ -314,6 +314,41 @@ export class RpcClient {
       return this.v012Request<T>("session/prompt", { request: { ...payload, requestId: makeRpcId("prompt") } }, timeoutMs);
     }
 
+    // ---- 需求三第二批：显式分支（每个端点都写成字面量，args:audit 才能覆盖）----
+    if (method === "session.projections") {
+      return this.v012Request<T>("session/projections", { request: { sessionId: payload?.sessionId } }, timeoutMs);
+    }
+    if (method === "subagents.interruptByParent") {
+      // Flat three args; `mode` has exactly one legal value on 0.2.0.
+      return this.v012Request<T>(
+        "subagents/interruptByParent",
+        { childSessionId: payload?.childSessionId, parentSessionId: payload?.parentSessionId, mode: payload?.mode },
+        timeoutMs,
+      );
+    }
+    if (method === "goals.create") {
+      return this.v012Request<T>("goals/create", { agentId: payload?.agentId, request: payload?.request }, timeoutMs);
+    }
+    if (method === "goals.edit") {
+      return this.v012Request<T>(
+        "goals/edit",
+        { agentId: payload?.agentId, ref: payload?.ref, request: payload?.request },
+        timeoutMs,
+      );
+    }
+    if (method === "goals.pause") {
+      return this.v012Request<T>("goals/pause", { agentId: payload?.agentId, ref: payload?.ref }, timeoutMs);
+    }
+    if (method === "goals.resume") {
+      return this.v012Request<T>("goals/resume", { agentId: payload?.agentId, ref: payload?.ref }, timeoutMs);
+    }
+    if (method === "goals.complete") {
+      return this.v012Request<T>("goals/complete", { agentId: payload?.agentId, ref: payload?.ref }, timeoutMs);
+    }
+    if (method === "goals.clear") {
+      return this.v012Request<T>("goals/clear", { agentId: payload?.agentId, ref: payload?.ref }, timeoutMs);
+    }
+
     // Unknown method: best-effort slash mapping with args as-is (loose parsing
     // policy — let the server reject it loudly rather than guessing silently).
     return this.v012Request<T>(method.replace(/\./g, "/"), payload, timeoutMs);
