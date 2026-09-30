@@ -26,7 +26,7 @@
 - harness 三参数与诊断行、删掉强制 `open-search`：复核确认无语法/逻辑错误。
 - 布局侧复核给出了比原作者更强的论据（`.capsule` 为 `flex:none` 且排在 `spacer`/`⋯` 之前 ⇒ 挤压顺序是"标题→spacer→⋯"，胶囊是最后才可能被裁掉的元素），与"220px 下胶囊仍完好"的截图一致。
 
-**验证**：`pnpm compile` 0 错；`pnpm build`；`regress:all` 全绿（102/102）；`args:audit` 0 处不匹配；截图矩阵重拍（`docs/mockups/shots/v211-*`）。
+**验证**：`pnpm compile` 0 错；`pnpm build`；`regress:all` 全绿（102/102）；`args:audit` 0 处不匹配；截图矩阵重拍 6 张（**截图不入库**，按 `docs/ui-handoff.md` §5 命令可重拍）。
 
 ## v0.21.0 — 设置页瘦身 + 状态胶囊加固 + webview 资源版本（接 `docs/ui-handoff.md` §6 三件）
 
@@ -51,7 +51,7 @@
 - 协议新增（**扩展↔webview**，不碰 DSH 协议）：`{t:"prefs"}` / `{t:"get-prefs"}` / `{t:"set-pref"}` / `{t:"select-instance"}`（**作用域**：`defaultModel` 写 Workspace —— 0.21.0 误写 Global，见 v0.21.1 第 1 条修复）。
 - 底部两个出口：打开 DSH 本体设置（GUI）/ VSCode 设置页。
 
-**验证**：`pnpm compile` 双 tsconfig 0 错；`pnpm build` 产出；`regress:all` 全绿（fold 24/24、fence 8/8、pathlink 8/8、locate 25/25、model 23/23、repair 14/14）；`args:audit`（桌面版 0.2.0 asar）**0 处不匹配**；`node --check dist/extension.cjs` 通过；截图矩阵 7 张（`docs/mockups/shots/v210-*`）。
+**验证**：`pnpm compile` 双 tsconfig 0 错；`pnpm build` 产出；`regress:all` 全绿（fold 24/24、fence 8/8、pathlink 8/8、locate 25/25、model 23/23、repair 14/14）；`args:audit`（桌面版 0.2.0 asar）**0 处不匹配**；`node --check dist/extension.cjs` 通过；截图矩阵 7 张（**截图不入库**，命令见 `docs/ui-handoff.md` §5）。
 
 **待用户手测**：① 装 0.21.0 后 **Reload Window**，看头部胶囊是否出现（若仍不出现，请截图头部 + `DSH: Show Logs` 里 `[dsh-vscode] webview bundle v…` 那行）② 设置抽屉四条：改默认模型 / 切权限 / 切实例 / 关自动打开 ③ 高级折叠展开后 schema 表单仍可保存。
 

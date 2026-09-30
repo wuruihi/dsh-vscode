@@ -24,7 +24,7 @@
 ## 2. 当前版本与状态
 
 - 版本 **0.21.1**（`dsh-web-vscode-0.21.1.vsix`，已装；0.21.0 是同日上一版）
-- 工作区**未 push**；回归全绿（102/102）；`args:audit` 0 漂移（43 覆盖点）；截图矩阵 `docs/mockups/shots/v211-*`（+ 0.21.0 的 `v210-*`）
+- 工作区回归全绿（102/102）；`args:audit` 0 漂移（43 覆盖点）；**截图不入库**（`docs/mockups/shots/` 只留 `.gitkeep`，需要时按 §5 重拍——历史截图会变成误导源）
 - 0.21.0 落地后做过一次**独立子代理对抗性复核**（只读、不共享写作上下文）→ 结论 PASS WITH ISSUES → 0.21.1 修了 4 条实质问题 + 降级 2 处过强断言（详见 CHANGELOG v0.21.1）
 - **待用户确认（唯一开口）**：装 0.21.1 后 Reload Window，头部状态胶囊是否出现
 
@@ -61,7 +61,7 @@ pnpm args:audit（Electron-as-node + DSH_ROOT=资源目录\app.asar\dsh）
 scripts/smoke.mjs --base-url http://127.0.0.1:19387 --from-credentials
 ```
 
-**截图自检**（`docs/mockups/harness.html`）：用桩 `__dshApi` 喂真实形状消息，在浏览器里跑真实 `dist/webview.js`。
+**截图自检**（`docs/mockups/harness.html`）：用桩 `__dshApi` 喂真实形状消息，在浏览器里跑真实 `dist/webview.js`。出图写在 `docs/mockups/shots/`（**该目录已 gitignore，不会有截图混进提交**；目录本身用 `.gitkeep` 保留）。
 ```powershell
 $exe="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"   # 必须独立 profile，否则截图会静默失败留旧图
 & $exe --headless=new --no-first-run --disable-gpu --hide-scrollbars `

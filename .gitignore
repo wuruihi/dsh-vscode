@@ -11,3 +11,8 @@ test-sandbox/
 .tmp-*
 tmp-*
 _tmp_*
+
+# 截图自检产物：不入库（每轮 UI 改动都会重拍，历史图只会变成过期的误导源）
+# 目录本身靠 .gitkeep 保留，好让 ui-handoff §5 的截图命令直接可用
+docs/mockups/shots/*
+!docs/mockups/shots/.gitkeep
