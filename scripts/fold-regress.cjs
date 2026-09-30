@@ -202,5 +202,38 @@ str.pushMany([
 ]);
 ok("string-form message still renders", str.items.find((i) => i.kind === "turn").text === "纯文本");
 
+// 11. DSH 0.2.0 injection frames must NOT render as the user's own message.
+//     Probed on the desktop app (0.2.0-rc.2, 19387): ONE prompt produced SIX
+//     user/message events — the user's text plus agent-instructions,
+//     plugin:dsh-memory-loader, runtime-context, skill-catalog, time-context.
+//     The host UI renders every non-"user" source as a folded context entry;
+//     this fold only knew text markers, so time-context (no <system-reminder>
+//     wrapper, no known head) showed up as a message the user never typed.
+const injectText = {
+  "time-context": "Time sampled while preparing turn 1, step 1: 2026-09-30T10:11:34+08:00[Asia/Shanghai]\nBrowser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.",
+  "runtime-context": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nfile policy: workspace-write",
+  "plugin:dsh-memory-loader": "Memory context auto-loaded by dsh-memory-loader.\n\n# 用户常量\n…",
+};
+for (const [kind, text] of Object.entries(injectText)) {
+  const f = new ConversationFold();
+  f.pushMany([
+    ev("user/message", { content: [{ type: "text", text }], source: { kind, form: "snapshot" }, role: "user" }),
+    ev("turn/start", { turn: 1 }),
+    ev("assistant/message", { turn: 1, step: 1, message: { content: [{ type: "text", text: "收到" }] } }),
+    ev("turn/end", { turn: 1 }),
+  ]);
+  ok(`injected ${kind} not rendered as user message`, f.items.filter((i) => i.kind === "user").length === 0);
+}
+
+// 11b. the user's own message (source.kind === "user") must still render
+const mine = new ConversationFold();
+mine.pushMany([ev("user/message", { content: [{ type: "text", text: "请只回复两个字：收到" }], source: { kind: "user", rpcId: "abc" }, role: "user" })]);
+ok("real user message survives (source.kind=user)", mine.items[0]?.kind === "user" && mine.items[0].text === "请只回复两个字：收到");
+
+// 11c. old hosts with NO source.kind fall back to the head markers
+const noSrc = new ConversationFold();
+noSrc.pushMany([ev("user/message", { content: [{ type: "text", text: injectText["time-context"] }] })]);
+ok("time-context hidden without source.kind (head marker)", noSrc.items.filter((i) => i.kind === "user").length === 0);
+
 console.log(fails.length === 0 ? `\n${passed}/${passed} passed` : `\nFAILED: ${fails.length}`);
 process.exit(fails.length === 0 ? 0 : 1);

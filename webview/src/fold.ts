@@ -554,6 +554,19 @@ function parseJson(raw: unknown): unknown {
  *  content is dropped here — the bubble shows chips, never file content. */
 function extractUserPayload(data: unknown): { text: string; files: string[]; images: FoldImage[] } {
   const d = (data ?? {}) as any;
+  // DSH 0.2.0 tags every user/message with source.kind, and the host's own UI
+  // (dsh-client-ui-chat's contextProducer) renders every kind except a plain
+  // user send as a FOLDED CONTEXT ENTRY — never as a message bubble. The
+  // text-head heuristics below only catch kinds whose prose happens to start
+  // with a known marker, so `time-context` ("Time sampled while preparing
+  // turn …") slipped through and the panel showed a message the user never
+  // typed (probed 2026-09-30: ONE prompt → SIX user/message events =
+  // user + agent-instructions + plugin:dsh-memory-loader + runtime-context +
+  // skill-catalog + time-context). Prefer the authoritative kind when the host
+  // sends one; hosts without source.kind keep the text rules below (and the
+  // two time-context heads added to INJECTED_HEADS).
+  const srcKind = typeof d.source?.kind === "string" ? d.source.kind : "";
+  if (srcKind && srcKind !== "user") return { text: "", files: [], images: [] };
   const parts: string[] = [];
   const files: string[] = [];
   const images: FoldImage[] = [];
@@ -619,6 +632,11 @@ const INJECTED_HEADS = [
   /^The approval policy changed\b/,
   /^This snapshot supersedes\b/,
   /^The available skill catalog changed\b/,
+  // 0.2.0 time-context snapshot (source.kind === "time-context"): unwrapped and
+  // unmarked before 2026-09-30, so it rendered as a user message. Kept as a
+  // fallback for hosts that do not send source.kind.
+  /^Time sampled while preparing\b/,
+  /^Browser time zone for this request:/,
 ];
 
 function isInjectedParagraphStart(para: string): boolean {

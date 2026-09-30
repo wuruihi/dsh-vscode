@@ -4,6 +4,15 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.19.1 — 修 0.2.0 注入帧被当成"人发的消息"渲染（用户报：发出消息后自动多一条）
+
+- **现象**（用户手测 v0.19.0）：插件面板里发一条消息后，下面自动多出一条"我说的话"，而**桌面版 App 本体里看不到这条**。
+- **根因**：DSH 0.2.0 给每条 `user/message` 都加了 `source.kind`，本体 UI（`dsh-client-ui-chat` 的 `contextProducer()`）把**凡不是 `kind:"user"` 的源一律渲染成折叠的上下文条目**，绝不渲染成消息气泡。插件只靠文本首行标记识别注入（`Instructions from` / `Current runtime context` / …），而 0.2.0 新增的 `time-context` 注入**既没有 `<system-reminder>` 包裹、首行也不在标记表里** → 被渲染成用户消息。
+- **实测数据**（桌面版 19387，一次提问）：产生 **6 条 `user/message`**——`user`（用户原文）+ `agent-instructions` + `plugin:dsh-memory-loader` + `runtime-context` + `skill-catalog` + `time-context`。前 5 条都被旧规则剥掉，只有最后一条漏网（262 字，以 `Time sampled while preparing turn 1, step 1: …` 开头）——正好对上"只多一条"。
+- **修法**（`webview/src/fold.ts`，纯渲染层，扩展宿主无关）：`extractUserPayload` 改为**优先按 `source.kind` 判**——有 kind 且 ≠ `"user"` → 不渲染；没有 kind 的旧宿主（0.1.5 及更早）回退原文本标记规则；并把 `^Time sampled while preparing` / `^Browser time zone for this request:` 加进 `INJECTED_HEADS` 兜底。用户自己的消息（`kind:"user"`）照常渲染，且仍走原有的段落级剥离（防"正文后追加注入"的旧形态）。
+- **回归**：`scripts/fold-regress.cjs` 17/17 → **22/22**，新增 5 例全部用实测原文：三种注入（`time-context` / `plugin:dsh-memory-loader` / `runtime-context`）不得产生用户消息、`source.kind:"user"` 的真实消息必须存活、无 `source.kind` 的旧宿主仍靠首行标记隐藏。
+- **待用户手测**：重载窗口后再发一条消息，面板应只剩你发的那一条。
+
 ## v0.19.0 — 实例选择：插件可直接附身**桌面版 App**（19387），并在两个 DSH 之间切换
 
 - **背景（本机实测）**：桌面版 Electron App（0.2.0-rc.2，自动更新）与旧 CLI（`C:\Users\wurui\dsh`，0.1.5-rc.1）**共存且共用 `~/.dsh` 存储**（会话/凭证/存储不分 profile，`profiles/<名>/` 只放 cordis + node_modules）。旧 CLI **读不了新会话**：盘上 79 个 `session.v3` + 9 个 `session.v4`，v3→v4 的 codec 只存在于 0.2.0 包内。所以"切到桌面版"是必需项，不是可选优化。
