@@ -261,11 +261,17 @@ for (const s of frameSites) {
   }
 }
 
-// ---------- {request} 包裹集合（client.ts wrapped）：原先不在审计覆盖内 ----------
-const wrappedMatch = /const wrapped = new Set\(\[([\s\S]*?)\]\)/.exec(src);
-if (wrappedMatch) {
-  const methods = [...wrappedMatch[1].matchAll(/"([^"]+)"/g)].map((wm) => wm[1]);
-  console.log(`\n{request} 包裹方法（client.ts wrapped）: ${methods.length} 个`);
+// ---------- {request} 包裹集合（client.ts 的每个 `new Set([...])`）----------
+// 2026-09-30: 会话级 workspace 写端点（pin/unpin/archive/unarchive）从 wrapped
+// 拆到 SESSION_SCOPED_WORKSPACE_WRITES —— 扫描必须按"所有 Set 字面量"来，
+// 否则新集合会静默落在审计盲区（当初 wrapped 就是这么漏的）。
+const setRe = /const\s+(\w+)\s*=\s*new Set\(\[([\s\S]*?)\]\)/g;
+let sm;
+while ((sm = setRe.exec(src))) {
+  const name = sm[1];
+  const methods = [...sm[2].matchAll(/"([^"]+)"/g)].map((wm) => wm[1]);
+  if (methods.length === 0) continue;
+  console.log(`\n{request} 包裹方法（client.ts ${name}）: ${methods.length} 个`);
   for (const method of methods) {
     const endpoint = endpointOf.get(method) ?? method.replace(/\./g, "/");
     if (!desc.has(endpoint)) {

@@ -4,6 +4,32 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { DshUi } from "./dshui.js";
 import { CodeBlock } from "./code.js";
+import type { ViewToExt } from "../protocol.js";
+
+/**
+ * Does this inline-code text denote a file path worth making clickable?
+ *
+ * Deliberately narrow (需求三第一批 C3): only backticked text is considered,
+ * URLs are rejected outright, and a plain identifier or version number must
+ * NOT match. Anything that does not match renders exactly as before.
+ */
+export function pathInInlineCode(text: string): string | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return undefined; // http(s)://, file://
+  if (/^(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])[^\s]+$/.test(t)) return t; // absolute / relative
+  // multi-segment + extension; CJK directory names allowed (real projects use them)
+  if (/^[^\s\\/:*?"<>|]+(?:[\\/][^\s\\/:*?"<>|]+)+\.[A-Za-z0-9]{1,8}$/.test(t)) return t;
+  return undefined; // 1.2.3, array.map, 普通词
+}
+
+/** Inline-code paths open the file, exactly like the produced-files card. The
+ *  webview's single postMessage bridge is window.__dshApi (app.tsx owns it and
+ *  markdown.tsx must not import app.tsx — that would be a cycle). */
+function openFile(path: string): void {
+  const api = (window as unknown as { __dshApi?: { postMessage(m: unknown): void } }).__dshApi;
+  api?.postMessage({ t: "open-file", path } satisfies ViewToExt);
+}
 
 /**
  * Assistant markdown renderer with HOST-ALIGNED dsh-ui fence handling.
@@ -175,7 +201,17 @@ function makeComponents(): Components {
       if (lang === "dsh-ui") {
         return <DshUi spec={codeText.replace(/\n$/, "")} />;
       }
-      if (!className) return <code>{codeText}</code>;
+      if (!className) {
+        const p = pathInInlineCode(codeText);
+        if (p) {
+          return (
+            <button type="button" className="md-path" title={`打开 ${p}`} onClick={() => openFile(p)}>
+              {codeText}
+            </button>
+          );
+        }
+        return <code>{codeText}</code>;
+      }
       return (
         <code className={className} data-lang={lang ?? ""} data-text={codeText}>
           {codeText}

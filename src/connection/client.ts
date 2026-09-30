@@ -193,7 +193,14 @@ export class RpcClient {
     if (method === "workspace.list") {
       if (!this.v012) throw new DshNetworkError("workspace.list before v012 streams bound");
       const res = await this.v012.workspacesOnce(timeoutMs);
-      return { items: res.items ?? [] } as T;
+      // Three fields: the follow baseline carries the pin/archive id sets too,
+      // and dropping them left the panel's archive state permanently empty
+      // (design.md §3.6).
+      return {
+        items: res.items ?? [],
+        archivedSessionIds: res.archivedSessionIds ?? [],
+        pinnedSessionIds: res.pinnedSessionIds ?? [],
+      } as T;
     }
     if (method === "session.models") {
       const cat = await this.v012Request<any>("session/modelCatalog", {}, timeoutMs);
@@ -260,15 +267,25 @@ export class RpcClient {
       "session.updateQueue",
       "session.selectModel",
       "workspace.create",
-      "workspace.archiveSession",
     ]);
     if (wrapped.has(method)) {
       const endpoint = METHOD_MAP[method] ?? method.replace(/\./g, "/");
-      const request =
-        method === "workspace.archiveSession"
-          ? { sessionId: payload?.sessionId } // 0.1.2 dropped workspaceId
-          : { ...(payload ?? {}) };
-      return this.v012Request<T>(endpoint, { request }, timeoutMs);
+      return this.v012Request<T>(endpoint, { request: { ...(payload ?? {}) } }, timeoutMs);
+    }
+
+    // Session-scoped workspace writes (design.md §3.6): request-wrapped, and
+    // since 0.1.2 the workspaceId is gone — the session already pins the
+    // workspace. The caller still passes workspaceId so the legacy wire (which
+    // needs it) keeps working; here it is dropped.
+    const SESSION_SCOPED_WORKSPACE_WRITES = new Set([
+      "workspace.archiveSession",
+      "workspace.unarchiveSession",
+      "workspace.pinSession",
+      "workspace.unpinSession",
+    ]);
+    if (SESSION_SCOPED_WORKSPACE_WRITES.has(method)) {
+      const endpoint = METHOD_MAP[method] ?? method.replace(/\./g, "/");
+      return this.v012Request<T>(endpoint, { request: { sessionId: payload?.sessionId } }, timeoutMs);
     }
 
     if (method === "session.prompt") {

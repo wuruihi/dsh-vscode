@@ -235,5 +235,20 @@ const noSrc = new ConversationFold();
 noSrc.pushMany([ev("user/message", { content: [{ type: "text", text: injectText["time-context"] }] })]);
 ok("time-context hidden without source.kind (head marker)", noSrc.items.filter((i) => i.kind === "user").length === 0);
 
+// 12. produced files now carry {path, callId} (需求三第一批 C2/C4). The old
+//     shape was string[] — no callId, so the panel could not offer the diff.
+const prod = new ConversationFold();
+prod.pushMany([
+  ev("turn/start", { turn: 1, step: 1 }),
+  { ...ev("tool/call", { turn: 1, step: 1, callId: "call_e1", name: "edit", arguments: '{"file_path":"a.ts"}' }) },
+  { ...ev("tool/result", { turn: 1, step: 1, callId: "call_e1" }), view: { card: "diff", locations: [{ path: "D:/w/a.ts" }] } },
+  { ...ev("tool/call", { turn: 1, step: 2, callId: "call_e2", name: "edit", arguments: '{"file_path":"a.ts"}' }) },
+  { ...ev("tool/result", { turn: 1, step: 2, callId: "call_e2" }), view: { card: "diff", locations: [{ path: "D:/w/a.ts" }] } },
+  ev("turn/end", { turn: 1 }),
+]);
+const pt = prod.items.find((i) => i.kind === "turn");
+ok("produced is {path,callId}[] (badcase: used to be string[])", Array.isArray(pt.produced) && pt.produced[0]?.path === "D:/w/a.ts");
+ok("produced dedupes the path, keeps the LATEST callId", pt.produced.length === 1 && pt.produced[0]?.callId === "call_e2");
+
 console.log(fails.length === 0 ? `\n${passed}/${passed} passed` : `\nFAILED: ${fails.length}`);
 process.exit(fails.length === 0 ? 0 : 1);

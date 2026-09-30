@@ -16,7 +16,9 @@ import type {
   ModelsData,
   PresetData,
   QuestionCard,
+  SearchHit,
   SessionItem,
+  WorkspaceView,
 } from "../../webview/src/protocol.js";
 
 const BATCH_MS = 16;
@@ -44,6 +46,11 @@ export class SessionManager {
   private workspaceId: string | undefined;
   private currentSession: string | undefined;
   private sessionRows: SessionRow[] = [];
+  /** Workspace tree + pin/archive id sets — the ONLY authority for those
+   *  badges (workspace/follow baseline; workspace/list has no v012 endpoint). */
+  private workspaceItems: WorkspaceView[] = [];
+  private pinnedIds = new Set<string>();
+  private archivedIds = new Set<string>();
   private batch: { sessionId: string; frames: unknown[] } | undefined;
   private batchTimer: NodeJS.Timeout | undefined;
   private seenQuestions = new Set<string>();
@@ -100,6 +107,7 @@ export class SessionManager {
         return;
       }
       await this.refreshSessions();
+      void this.listWorkspaces(); // pin/archive id sets (design.md §3.6)
       // Reaffirm current session if it still exists, else pick/create.
       if (this.currentSession && this.sessionRows.some((r) => r.sessionId === this.currentSession)) {
         await Promise.all([this.loadHistory(this.currentSession), this.refreshModels(this.currentSession)]);
@@ -122,7 +130,7 @@ export class SessionManager {
     this.applyCachedTitles();
     // Post the list IMMEDIATELY (cached titles cover most rows); title
     // enrichment runs in the background and re-posts only if it learned more.
-    this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+    this.postSessions();
     void this.enrichTitlesInBackground();
   }
 
@@ -158,7 +166,7 @@ export class SessionManager {
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
       this.persistTitles();
       this.applyCachedTitles();
-      this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+      this.postSessions();
     } finally {
       this.enrichInFlight = false;
     }
@@ -228,12 +236,15 @@ export class SessionManager {
   }
 
   private async adoptSession(sessionId: string): Promise<void> {
+    // Session switch clears the diff ledger: "this session's produced files"
+    // must not be inflated by a previous session's turns (design.md §3.6).
+    this.diff?.setSession(sessionId);
     this.currentSession = sessionId;
     // v012 follow must open BEFORE the history snapshot: events racing the
     // snapshot are de-duplicated webview-side by seq (fold), but events
     // between a snapshot and a later follow-open would be lost forever.
     this.lifecycle.followSession(sessionId);
-    this.host.post({ t: "sessions", items: this.visibleItems(), current: sessionId });
+    this.postSessions(sessionId);
     await Promise.all([this.loadHistory(sessionId), this.refreshModels(sessionId)]);
     this.postPermissionOf(sessionId);
     this.refreshQueue(sessionId);
@@ -269,6 +280,49 @@ export class SessionManager {
       }));
   }
 
+  /** Single funnel for list state. Incremental by construction: the cwd-scoped
+   *  rows + two id sets — never a full cross-workspace snapshot (rule 1). */
+  private postSessions(current: string | undefined = this.currentSession): void {
+    this.host.post({ t: "sessions", items: this.visibleItems(), current });
+    this.host.post({
+      t: "flags",
+      archivedSessionIds: [...this.archivedIds],
+      pinnedSessionIds: [...this.pinnedIds],
+    });
+  }
+
+  /** Host-side search over ALL sessions (title / cwd / workspace title). The
+   *  panel asks per keystroke; only matches cross the boundary. `session/search`
+   *  exists on 0.2.0 but this deployment disables it (config openAt:"never"),
+   *  and enabling it is a DSH config change (red line) — see design.md §3.6. */
+  searchSessions(reqId: number, query: string): void {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      this.host.post({ t: "search-results", reqId, items: [] });
+      return;
+    }
+    const byPath = new Map(this.workspaceItems.map((w) => [normalizePath(String(w.path)), String(w.title ?? "")]));
+    const hits: SearchHit[] = this.sessionRows
+      .filter((r) => !r.blank && r.origin !== "subagent")
+      .map((r) => {
+        const title = titleOf(r) ?? this.titleCache.get(r.sessionId) ?? "";
+        const cwd = r.cwd ?? "";
+        return {
+          sessionId: r.sessionId,
+          title,
+          cwd,
+          workspaceTitle: byPath.get(normalizePath(cwd)) ?? "",
+          running: r.running,
+          archived: this.archivedIds.has(r.sessionId),
+          pinned: this.pinnedIds.has(r.sessionId),
+        };
+      })
+      .filter((h) => [h.title, h.cwd, h.workspaceTitle].some((s) => s.toLowerCase().includes(q)))
+      .sort((a, b) => Number(b.pinned) - Number(a.pinned)
+        || Number(b.title.toLowerCase().startsWith(q)) - Number(a.title.toLowerCase().startsWith(q)));
+    this.host.post({ t: "search-results", reqId, items: hits.slice(0, 100) });
+  }
+
   private async loadHistory(sessionId: string): Promise<void> {
     try {
       const h = await this.lifecycle.client.call<{ events: unknown[]; hasMore: boolean; projections?: Record<string, unknown> }>("session.history", {
@@ -288,7 +342,7 @@ export class SessionManager {
           p.values = { ...(p.values ?? {}), title };
           row.projections = p;
         }
-        if (changed) this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+        if (changed) this.postSessions();
       }
       this.host.post({ t: "history", sessionId, entries: h?.events ?? [], hasMore: !!h?.hasMore });
       // Seed UI projections (plan mode / todos) from the history page so a
@@ -338,17 +392,9 @@ export class SessionManager {
   }
 
   async archiveSession(sessionId: string): Promise<void> {
-    if (!this.workspaceId) {
-      this.host.post({ t: "notify", kind: "warn", message: "workspace 未就绪，稍后再试" });
-      return;
-    }
-    try {
-      await this.lifecycle.client.call("workspace.archiveSession", { workspaceId: this.workspaceId, sessionId });
-      if (this.currentSession === sessionId) await this.newSession();
-      else await this.refreshSessions();
-    } catch (err) {
-      this.host.post({ t: "notify", kind: "error", message: `归档失败：${errText(err)}` });
-    }
+    await this.workspaceWrite("workspace.archiveSession", sessionId, "归档");
+    // Archiving the OPEN session would leave the panel on a hidden row.
+    if (this.archivedIds.has(sessionId) && this.currentSession === sessionId) await this.newSession();
   }
 
   async loadOlder(sessionId: string, beforeSeq: number): Promise<void> {
@@ -515,7 +561,7 @@ export class SessionManager {
       await this.lifecycle.client.call("agentPreset.select", { sessionId, agentPreset });
       const row = this.sessionRows.find((r) => r.sessionId === sessionId);
       if (row) row.agentPreset = agentPreset;
-      this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+      this.postSessions();
       await this.refreshModels(sessionId);
     } catch (err) {
       const code = (err as { code?: string })?.code;
@@ -741,17 +787,74 @@ export class SessionManager {
     }
   }
 
-  /** workspace.list → follow-baseline adapter (read path; workspace/list has
-   *  no HTTP route on alpha.5 — mutations DO: probed arguments-invalid on
-   *  fake ids = endpoints exist, schema-checked). */
+  /** workspace.list → follow-baseline adapter. v012 has **no** `workspace/list`
+   *  endpoint (probed: POST /api/workspace/list → 404); the `workspace/follow`
+   *  baseline IS the read path, and it carries the pin/archive id sets.
+   *  Dropping those two (as this used to) left the panel's archive state
+   *  permanently empty — i.e. "归档" never took effect (design.md §3.6). */
   async listWorkspaces(): Promise<void> {
     try {
-      const res = await this.lifecycle.client.call<{ items?: unknown[]; archivedSessionIds?: string[] }>("workspace.list", {});
-      this.host.post({ t: "workspaces", items: (res?.items ?? []) as any, archivedSessionIds: res?.archivedSessionIds ?? [] });
+      const res = await this.lifecycle.client.call<{
+        items?: WorkspaceView[];
+        archivedSessionIds?: string[];
+        pinnedSessionIds?: string[];
+      }>("workspace.list", {});
+      this.workspaceItems = (res?.items ?? []) as WorkspaceView[];
+      this.archivedIds = new Set(res?.archivedSessionIds ?? []);
+      this.pinnedIds = new Set(res?.pinnedSessionIds ?? []);
+      this.host.post({
+        t: "workspaces",
+        items: this.workspaceItems,
+        archivedSessionIds: [...this.archivedIds],
+        pinnedSessionIds: [...this.pinnedIds],
+      });
+      this.postSessions();
     } catch (err) {
       this.host.post({ t: "notify", kind: "warn", message: `工作区列表读取失败：${errText(err)}` });
-      this.host.post({ t: "workspaces", items: [], archivedSessionIds: [] });
+      this.host.post({ t: "workspaces", items: [], archivedSessionIds: [], pinnedSessionIds: [] });
     }
+  }
+
+  /** Session-scoped workspace writes (pin / unpin / archive / unarchive).
+   *  The receipt carries only HALF the sets (pin/unpin → pinnedSessionIds,
+   *  archive/unarchive → archivedSessionIds) and archiving drops the session's
+   *  pin in the same durable write ⇒ re-read the baseline and treat it as the
+   *  only authority. legacy still needs `workspaceId`; the v012 branch drops it
+   *  (client.ts, "0.1.2 dropped workspaceId"). */
+  private async workspaceWrite(method: string, sessionId: string, label: string): Promise<void> {
+    if (!this.workspaceId) {
+      this.host.post({ t: "notify", kind: "warn", message: "工作区未就绪，稍后再试" });
+      return;
+    }
+    try {
+      await this.lifecycle.client.call(method, { workspaceId: this.workspaceId, sessionId });
+      await this.listWorkspaces();
+      this.host.post({ t: "notify", kind: "info", message: `${label}完成` });
+    } catch (err) {
+      const code = String((err as { code?: unknown })?.code ?? "");
+      const message = code.includes("not-found")
+        ? "该会话已不存在（可能已在桌面版删除）"
+        : code === "gateway/bad-request"
+          ? "已归档的会话不能置顶，请先取消归档"
+          : code === "workspace/session-active"
+            ? "该会话正在运行，无法归档"
+            : `${label}失败：${errText(err)}`;
+      this.host.post({ t: "notify", kind: "error", message });
+    } finally {
+      this.postSessions();
+    }
+  }
+
+  async setPinned(sessionId: string, pinned: boolean): Promise<void> {
+    await this.workspaceWrite(
+      pinned ? "workspace.pinSession" : "workspace.unpinSession",
+      sessionId,
+      pinned ? "置顶" : "取消置顶",
+    );
+  }
+
+  async unarchiveSession(sessionId: string): Promise<void> {
+    await this.workspaceWrite("workspace.unarchiveSession", sessionId, "取消归档");
   }
 
   /** All workspace mutations refresh the list afterwards (single code path). */
@@ -924,7 +1027,7 @@ export class SessionManager {
           const p = (row.projections ?? {}) as Record<string, any>;
           p.values = { ...(p.values ?? {}), title: payload.value };
           row.projections = p;
-          this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+          this.postSessions();
         }
       }
       return;
@@ -1014,7 +1117,7 @@ export class SessionManager {
     const row = this.sessionRows.find((r) => r.sessionId === sid);
     if (row && row.running !== running) {
       row.running = running;
-      this.host.post({ t: "sessions", items: this.visibleItems(), current: this.currentSession });
+      this.postSessions();
     }
   }
 
@@ -1044,6 +1147,9 @@ export class SessionManager {
   /** webview came back alive (reload): rebuild its view. */
   async onWebviewReady(): Promise<void> {
     this.host.post({ t: "conn", state: this.lifecycle.currentState });
+    // Capability hint — legacy hosts have no pin/unpin/unarchive (design.md §3.6).
+    this.host.post({ t: "caps", flavor: this.lifecycle.currentFlavor ?? "legacy" });
+    void this.listWorkspaces();
     if (this.currentSession) {
       await this.refreshSessions();
       await Promise.all([

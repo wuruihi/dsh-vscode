@@ -4,6 +4,30 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.19.2 — 需求三第一批：跨会话搜索 / 置顶归档（**修好"归档从未生效"**）/ 交付物清单
+
+**流程**：吴胖圈选第一批三项 → 方案 v1 → **独立子代理审查（7 维度全 FAIL，13 条阻塞项 + 8 条建议）** → 修订 v2 → 用户确认后执行。审查推翻了我 v1 的核心判断，这条也是本次最大的实际收益。
+
+**修好的真 bug（本次核心）**：插件的"归档"在桌面版 0.2.0 上**从未生效**。v012 **没有 `workspace/list` 端点**（实测 `POST /api/workspace/list` → 404），列表与两个 id 集合都在 `workspace/follow` 的 **baseline** 帧里，而 `remote.ts:162` 只取了 `items`，把 `archivedSessionIds` / `pinnedSessionIds` 丢掉了 ⇒ 面板里归档的会话照旧显示（本机 37 个归档会话中有 9 个仍挂在列表上）。修复：`remote.ts` / `client.ts` 三字段贯通 → `manager` 落字段并下发 → 面板据此过滤与排序。
+**行为变化**：修好后工作区面板不再显示已归档会话；勾选「显示归档」可看回来。
+
+**A 跨会话搜索**：新命令 `DSH: Search Sessions (All Workspaces)`。`session/search` 在本部署被禁用（配置 `openAt:"never"`，开启需改 DSH 配置＝红线），本体侧栏搜索也不走它（客户端包零命中）⇒ 采用**宿主侧按需过滤**（`{t:"search-sessions"}` → `{t:"search-results"}`），只回匹配项、**不下发全量索引**（严守 AGENTS.md 硬规则 1）。「会话列表」Sheet 加搜索框 + 「显示归档」开关（与搜索 Sheet 共享状态）。
+
+**B 置顶 / 归档**：会话行新增 📌 置顶/取消置顶、取消归档按钮；端点 = `workspace/pinSession|unpinSession|archiveSession|unarchiveSession`（`{request:{sessionId}}`；legacy 仍带 `workspaceId`，由 v012 分支丢弃）。回执只带**一半**集合、且**归档会连带丢弃该会话的置顶** ⇒ 写成功后一律重读 baseline 作为唯一权威。错误语义分三类（会话不存在 / 已归档不能置顶 / 活动会话不能归档）。legacy flavor 下隐藏这三个动作与「显示归档」（新 `caps` 消息，握手与连接态变化各下发一次）。
+
+**C 交付物清单**：`fold` 产出记录 `string[]` → `{path, callId?}[]`（同一路径保留最新 callId）；面板头部新增「本次产出」Sheet（点击开文件，有 callId 时行内「变更」开 diff）；`components/markdown.tsx` 新增导出 `pathInInlineCode()`，回复里反引号包裹的路径变为可点击（URL / 版本号 / 标识符不误伤）；新命令 `DSH: Show This Session's Produced Files`（宿主侧 QuickPick → 真实 diff），`TurnEdits` 加 `sessionId` + 切会话 `resetSession()`，不再把上一个会话的产出算进来。
+
+**文档先行**：`design.md` 新增 §3.6（读路径 / 写路径 / 搜索 / caps / 点击语义统一口径），§3.0 与 §3.3 补齐 pin/unpin/unarchive；`AGENTS.md` 审计覆盖口径改为**四处 29 点**；`roadmap.md` 第一批标已开工。
+
+**验证（全部实测）**：
+- `pnpm compile` 双 tsconfig exit 0；`pnpm build` 产出 `dist/extension.cjs` + `dist/webview.js`
+- `pnpm regress:all`：fold **24/24**（+2 例 produced 结构）、fence **8/8**、pathlink **8/8**（新脚本）、locate **25/25**（1 例真实机器集成用例因旧 CLI 目录不在盘上自动 skip）、model 23/23、repair 14/14
+- `pnpm args:audit`（桌面版 0.2.0 asar）：**0 处不匹配**，覆盖点 **29** = 11 v012Request + 6 流开帧 + 8 wrapped + 4 会话级写集合；4 个新端点全部 PASS `[request]`
+- `pnpm smoke --base-url http://127.0.0.1:19387 --from-credentials`：**14/14**，含新增断言 `workspace/follow baseline carries pin/archive id sets — archived=37, pinned=0`（修复的硬证据）；测试会话已归档、文件已清除，**无残留**
+- 旧 CLI 目录 `C:\Users\wurui\dsh` 已不在盘上 ⇒ `args:audit` 本次只覆盖桌面版 asar
+
+**待用户手测**：① 搜索跨工作区命中 ② 置顶→重载仍在顶部 ③ 归档→「显示归档」可见→取消归档回列表 ④ 已归档会话不再出现在列表 ⑤「本次产出」文件可打开、回复里 `path/to/file.md` 可点 ⑥ 对已归档会话点置顶出现正确提示
+
 ## v0.19.1 — 修 0.2.0 注入帧被当成"人发的消息"渲染（用户报：发出消息后自动多一条）
 
 - **现象**（用户手测 v0.19.0）：插件面板里发一条消息后，下面自动多出一条"我说的话"，而**桌面版 App 本体里看不到这条**。

@@ -34,8 +34,10 @@ export interface TurnItem {
   /** current running tool label for the live indicator */
   liveTool?: string;
   /** files produced by this turn's successful mutation tools (diff/edit
-   *  call-view locations, web-GUI ProducedFiles semantics) */
-  produced?: string[];
+   *  call-view locations, web-GUI ProducedFiles semantics). `callId` (when
+   *  known) lets the panel offer the real diff; the path alone always offers
+   *  open-file. */
+  produced?: { path: string; callId?: string }[];
   /** last event seq seen in this turn — the fork-at anchor */
   lastSeq?: number;
   /** 1-based turn number for the separator pill */
@@ -241,7 +243,7 @@ export class ConversationFold {
         const d = ev.data ?? {};
         const preview = extractResultPreview(d, view?.view);
         const isError = isErrorResult(d);
-        if (!isError) this.addProduced(producedPathsFromCallView(view?.view));
+        if (!isError) this.addProduced(producedPathsFromCallView(view?.view), resultCallId(d));
         // wire fact (rc.2/alpha.5 probed): the callId lives at
         // data.callId OR nested in data.message.source.callId /
         // data.message.content[0].toolCallId — the top-level read alone
@@ -321,7 +323,7 @@ export class ConversationFold {
       case "tool-call-result": {
         const preview = extractResultPreview(chunk, view?.view);
         const isError = isErrorResult(chunk);
-        if (!isError) this.addProduced(producedPathsFromCallView(view?.view));
+        if (!isError) this.addProduced(producedPathsFromCallView(view?.view), resultCallId(chunk));
         this.finishTool(resultCallId(chunk), preview, isError);
         break;
       }
@@ -384,12 +386,16 @@ export class ConversationFold {
   /** Produced-files derivation (web-GUI ProducedFiles semantics): only diff
    *  cards or kind=edit generic cards count; reads/deletes/failed calls don't.
    *  First-seen order, de-duplicated. */
-  private addProduced(paths: string[]): void {
+  private addProduced(paths: string[], callId?: string): void {
     if (paths.length === 0) return;
     const cur = this.ensureTurn();
     cur.produced ??= [];
     for (const p of paths) {
-      if (!cur.produced.includes(p)) cur.produced.push(p);
+      const hit = cur.produced.find((e) => e.path === p);
+      // A path touched twice in one turn keeps its first position but the
+      // LATEST callId (that is the diff worth opening).
+      if (hit) hit.callId = callId ?? hit.callId;
+      else cur.produced.push({ path: p, callId });
     }
   }
 

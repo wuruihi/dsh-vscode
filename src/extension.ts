@@ -106,6 +106,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         status.text = statusText[s] ?? "$(circle-slash) DSH";
         status.tooltip = tooltipFor(s);
         panel.post({ t: "conn", state: s, baseUrl });
+        // Capability hint follows every connection-state change (design.md §3.6):
+        // legacy hosts have no pin/unpin/unarchive endpoints.
+        panel.post({ t: "caps", flavor: generation.currentFlavor ?? "legacy" });
       }),
       // Connection problems that need the user's eyes (v012 auth, unknown protocol).
       ev.onProblem((message: string) => {
@@ -308,6 +311,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       case "archive-session":
         void manager.archiveSession(m.sessionId);
         break;
+      case "pin-session":
+        void manager.setPinned(m.sessionId, m.pinned);
+        break;
+      case "unarchive-session":
+        void manager.unarchiveSession(m.sessionId);
+        break;
+      case "search-sessions":
+        manager.searchSessions(m.reqId, m.query);
+        break;
       case "respond-approval":
         void manager.respondApproval(m.rpcId, m.sessionId, m.approvalId, m.outcome);
         break;
@@ -377,6 +389,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand("dsh-vscode.showTurnChanges", () => {
       void diff.openTurnSummary();
+    }),
+    vscode.commands.registerCommand("dsh-vscode.showSessionChanges", () => {
+      void diff.openSessionSummary();
+    }),
+    // Cross-workspace session search (design.md §3.6): the panel owns the UI,
+    // the host filters on demand — `session/search` is disabled on this
+    // deployment, and enabling it is a DSH config change (red line).
+    vscode.commands.registerCommand("dsh-vscode.searchSessions", () => {
+      panel.reveal();
+      panel.post({ t: "open-search" });
     }),
     vscode.commands.registerCommand("dsh-vscode.showLogs", () => getLog().show()),
     // Which DSH are we talking to? (desktop App on 19387 / legacy CLI on 3080)

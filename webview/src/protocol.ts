@@ -56,6 +56,19 @@ export interface WorkspaceView {
   updatedAt?: string;
 }
 
+/** One row of the host-side session search. Only matches cross the boundary —
+ *  the cross-workspace index itself is never pushed (AGENTS.md rule 1;
+ *  design.md §3.6). */
+export interface SearchHit {
+  sessionId: string;
+  title?: string;
+  cwd?: string;
+  workspaceTitle?: string;
+  running: boolean;
+  archived: boolean;
+  pinned: boolean;
+}
+
 export type PromptPart =
   | { type: "text"; text: string }
   | { type: "image"; mediaType: string; data: string; name?: string }
@@ -133,7 +146,13 @@ export type ExtToView =
   | { t: "settings-describe"; data: { writable: boolean; hasDocument: boolean; namespaces: SettingsNs[] } }
   | { t: "settings-saved"; ns: string; ok: boolean; error?: string }
   /** workspace.list (via follow baseline) + archived session ids. */
-  | { t: "workspaces"; items: WorkspaceView[]; archivedSessionIds: string[] }
+  | { t: "workspaces"; items: WorkspaceView[]; archivedSessionIds: string[]; pinnedSessionIds: string[] }
+  /** Pin/archive id sets ONLY, sent after every list change (design.md §3.6). */
+  | { t: "flags"; archivedSessionIds: string[]; pinnedSessionIds: string[] }
+  | { t: "search-results"; reqId: number; items: SearchHit[] }
+  /** Protocol capability hint: legacy hosts have no pin/unpin/unarchive. */
+  | { t: "caps"; flavor: "v012" | "legacy" }
+  | { t: "open-search" }
   | { t: "notify"; kind: "info" | "warn" | "error"; message: string }
   /** Durable-image bytes pulled via session.attachment (rc.8+ hosts). */
   | { t: "attachment"; sessionId: string; attachmentId: string; mediaType: string; data: string }
@@ -185,4 +204,8 @@ export type ViewToExt =
   | { t: "workspace-move"; workspaceId: string; beforeWorkspaceId?: string }
   | { t: "workspace-delete"; workspaceId: string }
   | { t: "workspace-add" }
-  | { t: "workspace-move-session"; sessionId: string; toWorkspaceId: string };
+  | { t: "workspace-move-session"; sessionId: string; toWorkspaceId: string }
+  // 需求三第一批：跨会话搜索（宿主侧按需过滤）+ 置顶/取消归档
+  | { t: "search-sessions"; reqId: number; query: string }
+  | { t: "pin-session"; sessionId: string; pinned: boolean }
+  | { t: "unarchive-session"; sessionId: string };

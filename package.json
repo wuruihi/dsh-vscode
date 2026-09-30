@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -59,6 +59,16 @@
         "command": "dsh-vscode.showTurnChanges",
         "title": "DSH: Show This Turn's Changes",
         "icon": "$(diff)"
+      },
+      {
+        "command": "dsh-vscode.showSessionChanges",
+        "title": "DSH: Show This Session's Produced Files",
+        "icon": "$(diff-added)"
+      },
+      {
+        "command": "dsh-vscode.searchSessions",
+        "title": "DSH: Search Sessions (All Workspaces)",
+        "icon": "$(search)"
       },
       {
         "command": "dsh-vscode.showLogs",
@@ -126,6 +136,10 @@
     "smoke": "node scripts/smoke.mjs",
     "args:audit": "node scripts/args-audit.mjs",
     "regress:locate": "node scripts/locate-regress.cjs",
+    "regress:fold": "node scripts/fold-regress.cjs",
+    "regress:fence": "node scripts/fence-regress.cjs",
+    "regress:pathlink": "node scripts/pathlink-regress.cjs",
+    "regress:all": "node scripts/fold-regress.cjs && node scripts/fence-regress.cjs && node scripts/pathlink-regress.cjs && node scripts/locate-regress.cjs && node scripts/model-regress.cjs && node scripts/repair-regress.cjs",
     "package": "pnpm build && vsce package --no-dependencies"
   },
   "devDependencies": {

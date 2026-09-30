@@ -22,6 +22,9 @@ export interface EditRecord {
 interface TurnEdits {
   turn: number;
   edits: EditRecord[];
+  /** Session this turn belongs to. The command surface claims "THIS session's
+   *  produced files", so the scope must be provable, not assumed. */
+  sessionId?: string;
 }
 
 function looksEdit(name: string): boolean {
@@ -70,6 +73,9 @@ function reconstruct(current: string, edits: EditRecord[]): { content: string; p
 export class DiffService implements vscode.Disposable {
   private turns: TurnEdits[] = [];
   private turnCounter = 0;
+  /** Sessions the manager told us about: turns are stamped with it, and a
+   *  session switch clears the ledger (resetSession). */
+  private currentSessionId: string | undefined;
   private latestByCall = new Map<string, { uri: vscode.Uri; turn: number }>();
   private disposables: vscode.Disposable[] = [];
   private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
@@ -89,12 +95,28 @@ export class DiffService implements vscode.Disposable {
     this.emitter.dispose();
   }
 
+  /** Manager tells us which session the live event feed belongs to. A switch
+   *  clears the ledger: the command says "THIS session's produced files", and
+   *  turns from a previous session would silently inflate it (the old code
+   *  accumulated across sessions, capped at the last 50 turns). */
+  setSession(sessionId: string | undefined): void {
+    if (this.currentSessionId === sessionId) return;
+    this.resetSession(sessionId);
+  }
+
+  resetSession(sessionId: string | undefined = this.currentSessionId): void {
+    this.turns = [];
+    this.turnCounter = 0;
+    this.latestByCall.clear();
+    this.currentSessionId = sessionId;
+  }
+
   /** Feed session events (current session only) — called from the manager. */
   onSessionEvent(ev: any): void {
     if (!ev || typeof ev.type !== "string") return;
     if (ev.type === "turn/start") {
       this.turnCounter += 1;
-      this.turns.push({ turn: this.turnCounter, edits: [] });
+      this.turns.push({ turn: this.turnCounter, edits: [], sessionId: this.currentSessionId });
       if (this.turns.length > 50) this.turns.splice(0, this.turns.length - 50);
       return;
     }
@@ -135,25 +157,54 @@ export class DiffService implements vscode.Disposable {
 
   /** Quick pick of the current turn's changed files, then open the last diff for the picked file. */
   async openTurnSummary(): Promise<void> {
-    const cur = this.currentTurnEdits();
-    const files = new Map<string, number>();
-    for (const e of cur.edits) files.set(e.filePath, (files.get(e.filePath) ?? 0) + 1);
+    await this.openSummary("turn");
+  }
+
+  /** Same surface, scoped to THIS session (command: dsh-vscode.showSessionChanges). */
+  async openSessionSummary(): Promise<void> {
+    await this.openSummary("session");
+  }
+
+  /** file → {count, lastCallId, turn} over the requested scope. */
+  private summarize(scope: "turn" | "session"): Map<string, { count: number; lastCallId: string; turn: TurnEdits }> {
+    const turns =
+      scope === "turn"
+        ? [this.currentTurnEdits()]
+        : this.turns.filter((t) => t.sessionId === undefined || t.sessionId === this.currentSessionId);
+    const files = new Map<string, { count: number; lastCallId: string; turn: TurnEdits }>();
+    for (const t of turns) {
+      for (const e of t.edits) {
+        const cur = files.get(e.filePath);
+        files.set(e.filePath, { count: (cur?.count ?? 0) + 1, lastCallId: e.callId, turn: cur?.turn ?? t });
+      }
+    }
+    return files;
+  }
+
+  private async openSummary(scope: "turn" | "session"): Promise<void> {
+    const files = this.summarize(scope);
     if (files.size === 0) {
-      vscode.window.showInformationMessage("DSH: 当前轮没有文件编辑。");
+      vscode.window.showInformationMessage(
+        scope === "turn" ? "DSH: 当前轮没有文件编辑。" : "DSH: 本会话没有文件编辑。",
+      );
       return;
     }
-    const picks = [...files.entries()].map(([p, n]) => ({
+    const picks = [...files.entries()].map(([p, v]) => ({
       label: vscode.workspace.asRelativePath(p),
-      description: `${n} 处编辑`,
+      description: `${v.count} 处编辑`,
       full: p,
     }));
-    const pick = await vscode.window.showQuickPick(picks, { placeHolder: "DSH: 本轮变更文件" });
+    const pick = await vscode.window.showQuickPick(picks, {
+      placeHolder: scope === "turn" ? "DSH: 本轮变更文件" : "DSH: 本会话产出文件",
+    });
     if (!pick) return;
-    const lastEdit = [...cur.edits].reverse().find((e) => e.filePath === pick.full);
-    if (lastEdit) {
-      const uri = this.latestByCall.get(lastEdit.callId)?.uri ?? this.uriFor(cur, lastEdit);
-      await this.openUri(uri);
-    }
+    const hit = files.get(pick.full);
+    if (!hit) return;
+    const rec =
+      [...hit.turn.edits].reverse().find((e) => e.callId === hit.lastCallId) ??
+      [...hit.turn.edits].reverse().find((e) => e.filePath === pick.full);
+    const uri = this.latestByCall.get(hit.lastCallId)?.uri ?? (rec ? this.uriFor(hit.turn, rec) : undefined);
+    if (uri) await this.openUri(uri);
   }
 
   private async openUri(uri: vscode.Uri): Promise<void> {

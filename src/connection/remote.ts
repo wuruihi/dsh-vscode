@@ -35,6 +35,15 @@ interface StreamCallbacks {
   onError?: (error: { code: string; message: string }) => void;
 }
 
+/** `workspace/follow` baseline payload (design.md §3.6). v012 has **no**
+ *  `workspace/list` endpoint — this frame is the read path, and its two id
+ *  sets are the only authority for the panel's pin/archive badges. */
+export interface WorkspaceBaseline {
+  items?: { workspaceId: string; path: string; title?: string; sessionIds?: string[] }[];
+  archivedSessionIds?: string[];
+  pinnedSessionIds?: string[];
+}
+
 export interface V012StreamsOptions {
   baseUrl: string;
   auth: Auth;
@@ -142,26 +151,34 @@ export class V012Streams {
   }
 
   /** One-shot workspace baseline for `workspace.list` under v012. */
-  workspacesOnce(timeoutMs = 10_000): Promise<{ items?: { workspaceId: string; path: string; title?: string; sessionIds?: string[] }[] }> {
+  workspacesOnce(timeoutMs = 10_000): Promise<WorkspaceBaseline> {
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (value: { items?: { workspaceId: string; path: string; title?: string; sessionIds?: string[] }[] }) => {
+      const finish = (value: WorkspaceBaseline) => {
         if (settled) return;
         settled = true;
         handle.cancel();
         clearTimeout(timer);
         resolve(value);
       };
-      const timer = setTimeout(() => finish({ items: [] }), timeoutMs);
+      const empty: WorkspaceBaseline = { items: [], archivedSessionIds: [], pinnedSessionIds: [] };
+      const timer = setTimeout(() => finish(empty), timeoutMs);
       const handle = this.openStream(
         "workspace/follow",
         {},
         {
           onItem: (value) => {
-            const frame = value as { type?: string; value?: { items?: { workspaceId: string; path: string; title?: string; sessionIds?: string[] }[] } };
-            if (frame?.type === "baseline") finish({ items: frame.value?.items ?? [] });
+            const frame = value as { type?: string; value?: WorkspaceBaseline };
+            if (frame?.type === "baseline") {
+              // All three fields: the id sets are the pin/archive authority.
+              finish({
+                items: frame.value?.items ?? [],
+                archivedSessionIds: frame.value?.archivedSessionIds ?? [],
+                pinnedSessionIds: frame.value?.pinnedSessionIds ?? [],
+              });
+            }
           },
-          onError: () => finish({ items: [] }),
+          onError: () => finish(empty),
         },
       );
     });

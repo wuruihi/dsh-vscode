@@ -98,7 +98,9 @@ export function App() {
   const [permission, setPermission] = useState<PermissionData | undefined>();
   const [presetData, setPresetData] = useState<PresetData | undefined>();
   const [draft, setDraft] = useState("");
-  const [drawer, setDrawer] = useState<"" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings">("");
+  const [drawer, setDrawer] = useState<
+    "" | "sessions" | "workspace" | "jobs" | "traj" | "subs" | "settings" | "search" | "produced"
+  >("");
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind: string; label: string; status: string; detail?: string; startedAt: number; finishedAt?: number }[]>([]);
@@ -118,6 +120,43 @@ export function App() {
   const [wsDelConfirm, setWsDelConfirm] = useState<string | null>(null);
   const [wsMoveFor, setWsMoveFor] = useState<string | null>(null);
   const [wsQuery, setWsQuery] = useState("");
+  // 需求三第一批（design.md §3.6）：置顶/归档 id 集合（权威来自宿主
+  // flags/workspaces 消息）、协议能力、"显示归档"开关（两个 Sheet 共享）、
+  // 跨会话搜索（宿主侧按需过滤，不下发全量索引）。
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [flavor, setFlavor] = useState<"v012" | "legacy" | undefined>(undefined);
+  const [showArchived, setShowArchived] = useState(false);
+  const [sessQuery, setSessQuery] = useState("");
+  const [hits, setHits] = useState<
+    { sessionId: string; title?: string; cwd?: string; workspaceTitle?: string; running: boolean; archived: boolean; pinned: boolean }[]
+  >([]);
+  const searchReqRef = useRef(0);
+  // Debounced host-side search (design.md §3.6): the panel sends the query and
+  // the host answers with matches only — no index is ever pushed.
+  useEffect(() => {
+    const q = sessQuery.trim();
+    const reqId = ++searchReqRef.current;
+    if (!q) {
+      setHits([]);
+      return;
+    }
+    const t = setTimeout(() => post({ t: "search-sessions", reqId, query: q }), 120);
+    return () => clearTimeout(t);
+  }, [sessQuery]);
+  // "本次产出"（本会话已加载窗口内 edit/write 记录的产出文件）——点击开文件，
+  // 需要看 diff 时走命令 `DSH: Show This Session's Produced Files`。
+  const producedAll = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of items) {
+      if (it.kind !== "turn") continue;
+      for (const p of (it as TurnItem).produced ?? []) m.set(p.path, (m.get(p.path) ?? 0) + 1);
+    }
+    return m;
+  }, [items]);
+  const visibleHits = useMemo(
+    () => (showArchived ? hits : hits.filter((h) => !h.archived)),
+    [hits, showArchived],
+  );
   const [trajFilter, setTrajFilter] = useState("");
   const [trajOpenSeq, setTrajOpenSeq] = useState<number | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -308,6 +347,22 @@ export function App() {
         case "workspaces":
           setWorkspaces((m.items ?? []) as any);
           setWsArchived(new Set(m.archivedSessionIds ?? []));
+          setPinnedIds(new Set(m.pinnedSessionIds ?? []));
+          break;
+        // Pin/archive id sets only — the host never re-sends the tree for these.
+        case "flags":
+          setWsArchived(new Set(m.archivedSessionIds ?? []));
+          setPinnedIds(new Set(m.pinnedSessionIds ?? []));
+          break;
+        case "search-results":
+          // Only the newest request may paint (typing is debounced, replies race).
+          if (m.reqId === searchReqRef.current) setHits(m.items ?? []);
+          break;
+        case "caps":
+          setFlavor(m.flavor);
+          break;
+        case "open-search":
+          setDrawer("search");
           break;
         case "settings-describe":
           setSettingsData(m.data);
@@ -623,6 +678,14 @@ export function App() {
           <button className="icon-btn" title="在浏览器打开 DSH GUI" onClick={() => post({ t: "open-browser" })}>
             <Icon name="globe" size={13} />
           </button>
+          <button
+            className={`icon-btn${drawer === "produced" ? " is-on" : ""}`}
+            title={`本次产出：本会话记录到的 edit/write 文件（${producedAll.size} 个）`}
+            disabled={producedAll.size === 0}
+            onClick={() => setDrawer((d) => (d === "produced" ? "" : "produced"))}
+          >
+            <Icon name="edit" size={13} />
+          </button>
           <button className="icon-btn" title="新建会话" onClick={() => post({ t: "new-session" })}>
             <Icon name="plus" size={13} />
           </button>
@@ -632,10 +695,34 @@ export function App() {
       {/* goal dock bar — active-session goal projection (GUI GoalBar look) */}
       <GoalBar data={goalData} />
       {drawer === "sessions" && (
-        <Sheet title="会话列表" onClose={() => setDrawer("")}>
+        <Sheet
+          title="会话列表"
+          onClose={() => setDrawer("")}
+          headControls={
+            <>
+              <input
+                className="drawer-search sheet-search"
+                placeholder="搜索标题 / 路径…"
+                value={sessQuery}
+                onChange={(e) => setSessQuery(e.target.value)}
+              />
+              <label className="archive-toggle" title="归档会话默认隐藏">
+                <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+                显示归档
+              </label>
+            </>
+          }
+        >
         <div className="session-list">
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}
-          {sessions.map((s) => (
+          {sessions
+            .filter((s) => showArchived || !wsArchived.has(s.sessionId))
+            .filter((s) => {
+              const q = sessQuery.trim().toLowerCase();
+              return !q || `${s.title ?? ""} ${s.cwd ?? ""}`.toLowerCase().includes(q);
+            })
+            .sort((a, b) => Number(pinnedIds.has(b.sessionId)) - Number(pinnedIds.has(a.sessionId)))
+            .map((s) => (
             <div
               key={s.sessionId}
               className={`session-row ${s.sessionId === current ? "is-current" : ""}`}
@@ -682,19 +769,121 @@ export function App() {
               >
                 <Icon name="branch" size={12} />
               </button>
-              <button
-                className="icon-btn mini"
-                title="归档（从列表隐藏，可在 DSH 网页版找回）"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  post({ t: "archive-session", sessionId: s.sessionId });
-                }}
-              >
-                <Icon name="trash" size={12} />
-              </button>
+              {flavor !== "legacy" && (
+                <button
+                  className={`icon-btn mini${pinnedIds.has(s.sessionId) ? " is-on" : ""}`}
+                  title={pinnedIds.has(s.sessionId) ? "取消置顶" : "置顶（排在列表最前）"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    post({ t: "pin-session", sessionId: s.sessionId, pinned: !pinnedIds.has(s.sessionId) });
+                  }}
+                >
+                  <span className="pin-glyph">📌</span>
+                </button>
+              )}
+              {wsArchived.has(s.sessionId) ? (
+                <button
+                  className="icon-btn mini"
+                  title="取消归档（回到普通列表）"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    post({ t: "unarchive-session", sessionId: s.sessionId });
+                  }}
+                >
+                  <Icon name="folder" size={12} />
+                </button>
+              ) : (
+                <button
+                  className="icon-btn mini"
+                  title="归档（从列表隐藏；勾选「显示归档」可看回来）"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    post({ t: "archive-session", sessionId: s.sessionId });
+                  }}
+                >
+                  <Icon name="trash" size={12} />
+                </button>
+              )}
             </div>
           ))}
         </div>
+        </Sheet>
+      )}
+
+      {/* cross-workspace session search (design.md §3.6): the HOST filters and
+          answers with matches only — no cross-workspace index is pushed. */}
+      {drawer === "search" && (
+        <Sheet
+          title="🔍 搜索会话"
+          onClose={() => setDrawer("")}
+          headControls={
+            <label className="archive-toggle" title="归档会话默认隐藏">
+              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+              显示归档
+            </label>
+          }
+        >
+          <input
+            autoFocus
+            className="drawer-search sheet-search"
+            placeholder="搜索标题 / 工作目录 / 工作区名…（跨全部工作区）"
+            value={sessQuery}
+            onChange={(e) => setSessQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const first = visibleHits[0];
+              if (first) {
+                setDrawer("");
+                post({ t: "switch", sessionId: first.sessionId });
+              }
+            }}
+          />
+          <div className="session-list">
+            {visibleHits.length === 0 && (
+              <div className="muted pad">{sessQuery.trim() ? "（无匹配会话）" : "（输入关键字开始搜索）"}</div>
+            )}
+            {visibleHits.map((h) => (
+              <div
+                key={h.sessionId}
+                className="session-row search-hit"
+                title={h.cwd ?? h.sessionId}
+                onClick={() => {
+                  setDrawer("");
+                  post({ t: "switch", sessionId: h.sessionId });
+                }}
+              >
+                <span className={`dot dot-${h.running ? "running" : "idle"}`} />
+                {h.pinned && <span className="pin-glyph">📌</span>}
+                <span className="session-title">{h.title || h.sessionId.slice(0, 8)}</span>
+                {h.archived && <span className="hit-badge">已归档</span>}
+                {h.workspaceTitle && <span className="hit-badge">{h.workspaceTitle}</span>}
+                <span className="hit-path">{h.cwd ?? ""}</span>
+              </div>
+            ))}
+          </div>
+        </Sheet>
+      )}
+
+      {/* this session's produced files (fold data; click opens the file, 变更
+          opens the recorded diff) */}
+      {drawer === "produced" && (
+        <Sheet title={`本次产出（${producedAll.size}）`} onClose={() => setDrawer("")}>
+          <div className="session-list">
+            {producedAll.size === 0 && <div className="muted pad">（本会话还没有 edit/write 记录）</div>}
+            {[...producedAll.entries()].map(([p, n]) => (
+              <div key={p} className="session-row produced-row">
+                <button className="files-card-row" title={p} onClick={() => post({ t: "open-file", path: p })}>
+                  <Icon name="edit" size={11} />
+                  <span className="files-card-path">{p.split(/[\\/]/).filter(Boolean).pop() ?? p}</span>
+                  <span className="hit-badge">{n} 处</span>
+                </button>
+              </div>
+            ))}
+            <div className="muted tiny pad">
+              仅统计 edit/write 类工具记录的产出，命令行生成的文件不计；只覆盖已加载的历史窗口。看 diff 用命令「DSH: Show This
+              Session&apos;s Produced Files」。
+            </div>
+          </div>
         </Sheet>
       )}
 
@@ -788,13 +977,13 @@ export function App() {
             };
             const byId = new Map(sessions.map((s) => [s.sessionId, s]));
             const grouped = new Set(workspaces.flatMap((w) => w.sessionIds ?? []));
-            const ungrouped = sessions.filter((s) => !grouped.has(s.sessionId) && !wsArchived.has(s.sessionId) && match(s));
+            const ungrouped = sessions.filter((s) => !grouped.has(s.sessionId) && (showArchived || !wsArchived.has(s.sessionId)) && match(s));
 
             return (
               <>
                 {workspaces.map((w, i) => {
                   const rows = (w.sessionIds ?? [])
-                    .filter((sid) => byId.has(sid) && !wsArchived.has(sid) && match(byId.get(sid)!))
+                    .filter((sid) => byId.has(sid) && (showArchived || !wsArchived.has(sid)) && match(byId.get(sid)!))
                     .map((sid) => byId.get(sid)!);
                   return (
                     <div key={w.workspaceId} className="ws-group">
@@ -1870,7 +2059,7 @@ function fallbackSegs(item: TurnItem): { kind: "text" | "thinking" | "tool"; tex
 
 /** Files produced by a finished turn (diff/edit locations) — accent-bordered
  *  card between the answer and the action bar (web GUI ProducedFiles look). */
-function ProducedCard({ files }: { files: string[] }) {
+function ProducedCard({ files }: { files: { path: string; callId?: string }[] }) {
   return (
     <div className="files-card">
       <div className="files-card-head">
@@ -1878,13 +2067,20 @@ function ProducedCard({ files }: { files: string[] }) {
       </div>
       <div className="files-card-rows">
         {files.map((f) => {
-          const isDir = /[\\/]$/.test(f);
-          const label = f.split(/[\\/]/).filter(Boolean).pop() ?? f;
+          const isDir = /[\\/]$/.test(f.path);
+          const label = f.path.split(/[\\/]/).filter(Boolean).pop() ?? f.path;
           return (
-            <button key={f} className="files-card-row" title={f} onClick={() => post({ t: "open-file", path: f })}>
-              <Icon name={isDir ? "folder" : "edit"} size={11} />
-              <span className="files-card-path">{label}</span>
-            </button>
+            <div key={f.path} className="files-card-line">
+              <button className="files-card-row" title={f.path} onClick={() => post({ t: "open-file", path: f.path })}>
+                <Icon name={isDir ? "folder" : "edit"} size={11} />
+                <span className="files-card-path">{label}</span>
+              </button>
+              {f.callId && (
+                <button className="link-btn" title="查看这次改动的 diff" onClick={() => post({ t: "open-diff", callId: f.callId! })}>
+                  变更
+                </button>
+              )}
+            </div>
           );
         })}
       </div>

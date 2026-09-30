@@ -32,7 +32,8 @@ pnpm package        # vsce 打 .vsix（输出 dist/）
 pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web 在跑）
 pnpm smoke -- --base-url http://127.0.0.1:19387 --from-credentials   # 连桌面版 App（凭证自动铸 cookie，无需 token）
 pnpm args:audit     # 离线校验插件 RPC 参数与宿主网关描述符（旧 CLI 直接用 node 跑）
-pnpm regress:locate # locate.ts 离线回归（26 项）
+pnpm regress:all    # 全部离线回归（fold / fence / pathlink / locate / model / repair）
+pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例在旧 CLI 目录缺失时自动 skip）
 ```
 
 > 审**桌面版**（`resources/app.asar` 里）必须让 Electron 当 node，普通 node 在 asar 上读不到文件：

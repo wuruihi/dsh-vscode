@@ -16,9 +16,9 @@
 
 | # | 优化项 | 依赖端点/包（已核对存在） | 价值 | 代价 |
 |---|---|---|---|---|
-| 1 | **跨会话搜索** | `session/search`（桌面版后端 = `dsh-session-query-sqlite` 的 SQLite FTS5） | 高：本机已有 93 个会话，现在只能肉眼翻 | 中：命令 + 结果列表 + 点击跳转会话 |
-| 2 | **会话整理：置顶 / 归档 / 取消归档** | `workspace/pinSession` `unpinSession` `archiveSession` `unarchiveSession` | 高：列表不再混杂，顺带能清"未分组"噪音 | 低：列表项动作（右键/悬停） |
-| 3 | **交付物卡片：本次会话改了哪些文件** | `dsh-client-ui-deliverables`（changed-files 卡 + 逐文件对比 + 正文文件引用可点）、`workspaceFiles/changes` | 高：验收场景一眼看全 | 中：卡片 + 复用已有原生 diff |
+| 1 | **跨会话搜索** ✅ v0.19.2 | 宿主侧按需过滤（`search-sessions`→`search-results`）；`session/search` 被部署禁用 `openAt:"never"`，不做 | 高 | 已完成 |
+| 2 | **会话整理：置顶 / 归档 / 取消归档** ✅ v0.19.2 | `workspace/pinSession` `unpinSession` `archiveSession` `unarchiveSession` + baseline 三字段（**同时修好归档状态恒空的 bug**） | 高 | 已完成 |
+| 3 | **交付物清单** ✅ v0.19.2 | `fold` 产出带 callId + 「本次产出」Sheet + 反引号路径可点 + `showSessionChanges` 命令 | 高 | 已完成 |
 
 ### 第二批（补现有功能的洞）
 

@@ -478,6 +478,16 @@ if (det.flavor === "legacy") {
   const wsBase = await nextItem(wsFollowId, 8000);
   const wsItems = wsBase?.value?.type === "baseline" ? (wsBase.value.value?.items ?? []) : [];
   ok("workspace/follow baseline", wsBase?.value?.type === "baseline", `${wsItems.length} workspaces`);
+  // 需求三第一批：baseline 也必须带 pin/archive id 集合 —— 读路径把这两个
+  // 字段丢掉，就是"归档状态恒为空、归档形同未生效"的根因（design.md §3.6）。
+  // 这里只断言形态（数组），不写任何状态、不建额外会话。
+  const wsArchived = wsBase?.value?.value?.archivedSessionIds;
+  const wsPinned = wsBase?.value?.value?.pinnedSessionIds;
+  ok(
+    "workspace/follow baseline carries pin/archive id sets",
+    Array.isArray(wsArchived) && Array.isArray(wsPinned),
+    `archived=${Array.isArray(wsArchived) ? wsArchived.length : "missing"}, pinned=${Array.isArray(wsPinned) ? wsPinned.length : "missing"}`,
+  );
 
   // session/list (gateway wants the reserved _request param)
   const list = await call("session/list", { _request: {} }, 30_000, "v012");
