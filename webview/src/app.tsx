@@ -108,6 +108,8 @@ export function App() {
   const [capOpen, setCapOpen] = useState(false);
   /** 会话列表筛选（需求三 UI）：只显示运行中。 */
   const [runningOnly, setRunningOnly] = useState(false);
+  /** 会话行操作收成一个 ⋯：只有展开的那一行才显示重命名/分叉/置顶/归档。 */
+  const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [killConfirm, setKillConfirm] = useState<string | null>(null);
   /** 需求三第三批：当前会话的 active 提醒（schedule/list 裸数组；无 nextRunAt）。 */
   const [schedules, setSchedules] = useState<
@@ -908,6 +910,16 @@ export function App() {
                   🔧 {s.subagents.running > 0 ? `${s.subagents.running}/${s.subagents.total}` : s.subagents.total}
                 </span>
               )}
+              <button
+                className="icon-btn mini row-more"
+                title="更多操作：重命名 / 分叉 / 置顶 / 归档"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRowMenu((v) => (v === s.sessionId ? null : s.sessionId));
+                }}
+              >
+                ⋯
+              </button>
               <button
                 className="icon-btn mini"
                 title="重命名"

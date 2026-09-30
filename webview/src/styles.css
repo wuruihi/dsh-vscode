@@ -1182,3 +1182,7 @@ body { line-height: 1.5; }
   .domain-tabs { padding: 3px 6px 0; }
   .msg-role { display: none; }
 }
+/* ── 需求三 UI：会话行默认只露一个 ⋯，点开才展开行内操作 ─────────────── */
+.session-list .session-row .icon-btn.mini { display: none; }
+.session-list .session-row .icon-btn.mini.row-more { display: inline-flex; font-size: 14px; line-height: 1; }
+.session-list .session-row.menu-open .icon-btn.mini { display: inline-flex; }
