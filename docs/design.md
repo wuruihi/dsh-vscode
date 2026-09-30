@@ -140,6 +140,24 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 
 **交付物点击语义（统一口径）**：面板内清单/卡片点击一律 `open-file`；要看变更才用行内按钮发 `open-diff`（需该文件有 live edit 的 `callId`）。宿主侧命令 `dsh-vscode.showSessionChanges`（QuickPick → diff）以 `TurnEdits.sessionId` 限定**本会话**，切会话即 `resetSession()` 清空。
 
+### 3.7 子代理 / Goal / 后台任务 / 计划评审（2026-09-30 需求三第二批）
+
+**子代理是"会话"，但必须用子代理地址访问**（0.2.0 实测）：`session/follow`、`session/page` 的 `address` 是 union——`{kind:"session",sessionId}` 或 `{kind:"subagent",parentSessionId,childSessionId,mode:"one-shot"|"continuable"|"unknown"}`。对 `origin:"subagent"` 的会话用 session 地址必被拒：`session/agent-busy: subagent Sessions require their durable parent address` ⇒ **子代理转录必须走子代理地址**（`mode` 从父会话 `subagentCatalog` 投影取）。
+
+**子代理三端点**：
+
+- **列表**：`subagents/list` **已移除**（0.2.0）⇒ 数据源＝`session/list`（`parentSessionId`/`origin`/`agentAvailable`/`running`）+ 父会话 `session/projections` 的 `subagentCatalog`（`[{id,mode,label,createdAt}]`）。注意两者 id 一致但 **label ≠ 行 title**（catalog 是任务名、行 title 是提示词开头），故双源。
+- **追问**：`subagents/prompt` ＝ `{request:{requestId, parentSessionId, childSessionId, mode:"continuable", delivery:"queue"|"steer", content:[{type:"text",text}], clientTimeZone?}}` → `{messageId}`。
+- **打断**：`subagents/interruptByParent` ＝ 平铺 `{childSessionId, parentSessionId, mode}`，`mode` 仅 `literal("continuable")`（**唯一合法值**）→ `{accepted:true}`。
+- 旧路径 `session.prompt` / `session.cancel` 指向 child **在 v012 被拒**（同一 routing 归属），**仅在 legacy flavor 回退使用**。
+
+**Goal**：`goal` 投影值 ＝ `{goal:{id,revision,objective,phase:"active"|"paused"|"blocked"|"complete",blockedReason?,maxGoalRounds}, roundsStarted, createdAt, updatedAt} | null` ⇒ **ref 必须从 `value.goal` 取** `{id,revision}`（不在投影顶层）。端点：`goals/create {agentId, request:{objective, maxGoalRounds?}}`、`goals/edit {agentId, ref, request}`、`goals/pause|resume|complete|clear {agentId, ref}`、`goals/get {agentId}`。
+
+**后台任务**：`job/list`、`job/follow` 都是 **stream** 端点（一元直调 → `gateway/signature-invalid: stream Remote methods must be opened through the stream carrier`）。`job/list` request ＝ `{sessionId}`，**帧只有 `{type:"rows", jobs:[…]}`（全量快照，无 baseline/增量）**；作业项含 `output:{total, earliest, spillPaths?}`（spill = 超大输出落盘的检索路径）。`job/kill {request:{jobId, sessionId?}}`。
+**0.2.0 的 `session/control` 不再携带 queue/jobs 帧** ⇒ 插件原先依赖的 `session/jobs` 负载永不出现：**任务面板恒空**（本版修复），**队列条同样无数据**（登记待查：改由 `inbox` 投影驱动）。
+
+**计划评审 / 提问**：应答载体 `$events/result` 可用；权威状态在 `userQuestions` 投影（`active[]` / `settled[]`，计划评审项的 `intent.kind === "plan-review"`）。必要时可走 `userQuestions/answer {agentId, callId, answer:{answers:[{id, selected, custom?}]}}` 与 `userQuestions/attachWait {agentId, callId}`。判"应答生效"必须三条同时成立：回执 `accepted===true` + 投影中该 callId 从 `active` 消失且 `state→continued` + 随后回合恢复产出。
+
 ## 4. 功能规格
 
 ### V1（本 spec 范围）

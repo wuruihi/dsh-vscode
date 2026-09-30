@@ -26,11 +26,12 @@
 
 | # | 优化项 | 依赖端点/包 | 价值 | 代价 |
 |---|---|---|---|---|
-| 4 | 子代理抽屉在 0.2.0 上的真修复 + 续跑/中断 | `subagents/prompt` `subagents/interruptByParent`（`subagents/list` 已移除 → 当前降级为空列表） | 中高 | 中 |
-| 5 | 计划模式评审链路（计划卡确认/编辑） | 0.2.0 走 `userQuestions/*` + `plan` 投影；`$events/result` 应答通路已实测可用 | 中高 | 低中（需一次真实交互实测） |
-| 6 | Goal 控制（暂停/继续/完成/清空） | `goals/create` `edit` `pause` `resume` `complete` `clear` `get` | 中 | 低（当前只有只读 GoalBar） |
-| 7 | 后台任务列表 + 中断 | `job/list` `follow` `kill` + `dsh-client-ui-jobs` | 中 | 中 |
-| 8 | Agent Teams 编队看板（roster + 任务板） | `agentTeam` 投影 + `dsh-experimental-client-ui-agent-team` | 中高（你在用 Agent Teams） | 中高 |
+| 4 | 子代理抽屉在 0.2.0 上的真修复 + 续跑/中断 ✅ v0.19.3 | **四条路径全失效**：列表恒空（`subagents/list` 移除）+ 转录/追问/打断被 `session/agent-busy` 拒 ⇒ 改子代理地址 + `subagents/prompt` + `interruptByParent` | 中高 | 中高 |
+| 5 | 计划模式评审链路（计划卡确认/编辑）✅ v0.19.3（按三条判据实测） | `userQuestions/*` + `$events/result`；权威状态在 `userQuestions` 投影 | 中高 | 低中 |
+| 6 | Goal 控制（暂停/继续/完成/清空）✅ v0.19.3 | `goals/*`，ref 取投影 `value.goal.{id,revision}` | 中 | 低 |
+| 7 | 后台任务列表 + 中断 ✅ v0.19.3 | `job/list` **流式**（帧只有 `{type:"rows",jobs}`）+ `job/kill` + `output.spillPaths` | 中 | 中 |
+| 8 | Agent Teams 编队看板（roster + 任务板） | `agentTeam` 投影实测 45/45 会话都是 lead-only ⇒ 当前无价值 | 中高 | 中高 |
+| 登记 | **队列条静默失效**：0.2.0 的 `session/control` 不再带 queue 帧（`remote.ts:355` 分支永不触发） | 候选：改由 `inbox` 投影驱动 | 中 | 中 |
 
 ### 第三批（锦上添花）
 

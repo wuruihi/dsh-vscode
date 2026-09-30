@@ -4,7 +4,7 @@ DSH（DeepSeek Harness）的 VSCode 客户端插件。协议客户端 + IDE 上�
 
 ## 项目定位与边界
 
-- **连接路线（已定，2026-09-30 修订）**：**附身运行中的常驻实例**，不 spawn 第二写者、不做 broker、不做端口扫描。候选固定两个：桌面版 Electron App（`127.0.0.1:19387`，**端口是硬编码常量**，无回退）与旧 CLI `dsh web`（`3080`）。默认优先桌面版（自动更新到最新）；两者都在时状态栏 + `DSH: Select DSH Instance` 可切换；`dsh-vscode.baseUrl` 显式设置永远最高优先。都没起 → 提示"打开桌面版 App"（兜底，App 未装则退到一键拉起旧版 3080）。**红线：绝不用桌面版 CLI 起 `web` profile**——它的 bundled pnpm + 0.2.0 installAnchor 会把 `~/.dsh/profiles/node_modules`（现在是 0.1.5 树）重装，永久破坏旧 CLI。契约见 docs/design.md §3.5。
+- **连接路线（已定，2026-09-30 修订）**：**附身运行中的常驻实例**，不 spawn 第二写者、不做 broker、不做端口扫描。候选固定两个：桌面版 Electron App（`127.0.0.1:19387`，**端口是硬编码常量**，无回退）与旧 CLI `dsh web`（`3080`）。默认优先桌面版（自动更新到最新）；两者都在时状态栏 + `DSH: Select DSH Instance` 可切换；`dsh-vscode.baseUrl` 显式设置永远最高优先。都没起 → 提示"打开桌面版 App"（兜底，App 未装则退到一键拉起旧版 3080）。**红线：绝不用桌面版 CLI 起 `web` profile**——它的 bundled pnpm + 0.2.0 installAnchor 会把 `~/.dsh/profiles/node_modules`（现在是 0.1.5 树）重装，永久破坏旧 CLI。契约见 docs/design.md §3.5。**2026-09-30 更新：用户已删除旧 CLI（`C:\Users\wurui\dsh`）⇒ 本机只剩桌面版实例；3080 候选、`autoStart`、`startDsh` 兜底代码全部保留（重装旧 CLI 即自动恢复），但"启动旧版"入口仅在能解析到 CLI 时才提供。**
 - **协议双 flavor（2026-09-02 定）**：同时兼容 0.1.1-rc.x（legacy 点式端点/双WS/respond）与 0.1.2+（v012 斜杠端点/单WS remote.mux/token换cookie），连接时探测自动切换，未知形态出横幅不静默死。用户**持续升级 DSH 到最新版**——每次升级后跑 `pnpm smoke` 确认适配。契约详见 docs/design.md §3.0。
 - **会话共享**：与 DSH GUI 同一实例同一存储，会话/插件生态全共享。
 - **分发**：仅本地 vsix，不发布 Marketplace（发布是红线，需用户另行确认）。
