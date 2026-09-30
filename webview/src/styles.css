@@ -1210,3 +1210,11 @@ body { line-height: 1.5; }
 .sheet-head { flex-wrap: wrap; row-gap: 4px; }
 .sheet-controls { flex-wrap: nowrap; }
 .chips { flex-wrap: nowrap; }
+/* ── 需求三 UI 修正（2026-09-30 按用户反馈）────────────────────────────
+   1) chip 里的中文被挤成竖排 => 禁止换行 + 不收缩
+   2) 会话列表要撑满抽屉整高（原先前半段有列表、下半段空白） */
+.chip { white-space: nowrap; flex: 0 0 auto; }
+.chips { width: 100%; }
+.sheet-body { display: flex; flex-direction: column; }
+.session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.subchips .chip { flex: 0 0 auto; }

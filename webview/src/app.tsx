@@ -104,7 +104,6 @@ export function App() {
   // trajectory raw events (capped; fed from history + live mux frames)
   const [rawEvents, setRawEvents] = useState<{ event: { type: string; seq: number; time?: number; data?: any }; view?: any }[]>([]);
   const [jobs, setJobs] = useState<{ id: string; kind?: string; label?: string; status: string; detail?: string; startedAt: number; finishedAt?: number; output?: { total?: number; earliest?: number; spillPaths?: string[] } }[]>([]);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   /** 会话列表筛选（需求三 UI）：只显示运行中。 */
   const [runningOnly, setRunningOnly] = useState(false);
@@ -666,8 +665,6 @@ export function App() {
             {(
               [
                 ["sessions", "会话列表"],
-                ["workspace", "工作区"],
-                ["search", "搜索"],
                 ["schedules", "提醒"],
                 ["produced", "产出"],
               ] as const
@@ -717,14 +714,14 @@ export function App() {
             <Icon name="slash" size={13} />
           </button>
           <button
-            className={`icon-btn${menuOpen ? " is-on" : ""}`}
-            title="更多：工作区 / 任务 / 子代理 / 轨迹 / 提醒 / 产出 / 设置"
-            onClick={() => setMenuOpen((v) => !v)}
+            className={`icon-btn${drawer !== "" ? " is-on" : ""}`}
+            title="打开抽屉：会话列表 / 运行 / 设置"
+            onClick={() => setDrawer((d) => (d === "" ? "sessions" : ""))}
           >
             <span className="dots">⋯</span>
           </button>
         </div>
-        {menuOpen && (
+        {false && (
         <div className="header-row header-tool-row header-menu">
           <span className="spacer" />
           <button
