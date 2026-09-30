@@ -702,13 +702,6 @@ export function App() {
           </button>
           <span className="spacer" />
           <button
-            className={`icon-btn${drawer === "search" ? " is-on" : ""}`}
-            title="搜索会话（跨工作区）"
-            onClick={() => setDrawer((d) => (d === "search" ? "" : "search"))}
-          >
-            <Icon name="slash" size={13} />
-          </button>
-          <button
             className={`icon-btn${drawer !== "" ? " is-on" : ""}`}
             title="打开抽屉：会话列表 / 运行 / 设置"
             onClick={() => setDrawer((d) => (d === "" ? "sessions" : ""))}
