@@ -750,7 +750,11 @@ export class SessionManager {
         this.lifecycle.client
           .call<{ values?: { subagentCatalog?: { id: string; mode?: string; label?: string }[] } }>(
             "session.projections",
-            { request: { sessionId } },
+            // Inner fields only: client.ts' explicit branch wraps it in
+            // `{request:{…}}`. Passing `{request:{sessionId}}` here produced
+            // `{"request":{}}` → gateway/input-invalid → swallowed by the catch
+            // below, i.e. the subagent catalog was silently always empty.
+            { sessionId },
           )
           .catch(() => ({ values: undefined })),
       ]);
