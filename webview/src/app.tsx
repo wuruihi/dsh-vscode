@@ -758,10 +758,16 @@ export function App() {
           <span className="spacer" />
           <button
             className={`icon-btn${drawer !== "" ? " is-on" : ""}`}
-            title="打开抽屉：会话列表 / 运行 / 设置"
+            title="打开抽屉：会话列表 / 诊断 / 设置"
             onClick={() => setDrawer((d) => (d === "" ? "sessions" : ""))}
           >
             <span className="dots">⋯</span>
+          </button>
+          {/* 新建会话：0.19.5 单行头部重构时，旧的 8 图标工具行被整条停用（{false && …}），
+              而「＋」没有搬进新头部 ⇒ 面板上再也没有新建入口（用户 2026-10-08 报）。
+              按设计稿「⋯ 之后是 ＋」补回，且**常显**：新建会话是最高频动作之一。 */}
+          <button className="icon-btn" title="新建会话（在当前工作区）" onClick={() => post({ t: "new-session" })}>
+            <Icon name="plus" size={13} />
           </button>
         </div>
         {false && (
@@ -972,7 +978,34 @@ export function App() {
               归档
             </button>
           </span>
-          <span className="sheet-note">共 {sessions.length} 个会话 · 仅当前工作区</span>
+          {/* 说明行右端补两个入口：新建会话 + 工作区管理。
+              两者都是重构中被"停用旧工具行"带走的入口（同类 bug：新建会话由用户报出，
+              工作区管理当时已无人可达）——放在"浏览会话"的地方最顺手。 */}
+          <span className="sheet-note">
+            <span>共 {sessions.length} 个会话 · 仅当前工作区</span>
+            <span className="sheet-note-actions">
+              <button
+                className="link-btn"
+                title="新建会话（在当前工作区）"
+                onClick={() => {
+                  setDrawer("");
+                  post({ t: "new-session" });
+                }}
+              >
+                ＋ 新建会话
+              </button>
+              <button
+                className="link-btn"
+                title="工作区：分组 / 重排 / 归档 / 移组"
+                onClick={() => {
+                  setDrawer("workspace");
+                  post({ t: "list-workspaces" });
+                }}
+              >
+                工作区…
+              </button>
+            </span>
+          </span>
         </div>
         <div className="session-list">
           {sessions.length === 0 && <div className="muted pad">（暂无会话）</div>}

@@ -1324,6 +1324,13 @@ body { line-height: 1.5; }
    注意：`.cap-pop` 是 `.header` 的兄弟节点，不受这条影响。 */
 .header { overflow: hidden; }
 
+/* ── 会话域说明行右端的入口（新建会话 / 工作区管理，2026-10-08）──────────
+   这两个入口在 0.19.5 单行头部重构里被"停用旧工具行"整条带走 ⇒ 面板上无路可达
+   （新建会话由用户报出、工作区管理当时已无人可达）。说明行本来就是 space-between
+   的 flex 行，右端直接挂按钮即可，不新增层级。 */
+.sheet-note-actions { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.sheet-note-actions .link-btn { white-space: nowrap; font-size: 11.5px; }
+
 /* ── 设置域：四条人话设置 + 出口 + 高级折叠（2026-09-30）──────────────────
    原设置页把服务端 schema 原样铺在最上层（内部字段名、大多只读）⇒ 用户
    "看不懂、啥都不能改"。现在第一屏是四条能看懂也能改的设置，schema 表收进
