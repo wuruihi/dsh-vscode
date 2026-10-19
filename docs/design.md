@@ -8,7 +8,7 @@
 
 **非目标**：
 - 不做 agent 运行时（DSH 本体就是）
-- 不自管 dsh web 实例、不做 broker（dsh-vsc 脆根因）。**2026-09-30 修订**：连接对象改为「运行中的实例」——默认附身桌面版 App（端口是宿主写死的 19387），其次旧 CLI（3080）。插件自己起服务降级为「两处都不通时的最后手段」，且只允许旧 CLI 拉起且必须显式警告（§3.5）
+- 不自管 dsh web 实例、不做 broker（dsh-vsc 脆根因）。**2026-09-30 修订**：连接对象改为「运行中的实例」——默认附身桌面版 App，其次旧 CLI（3080）。插件自己起服务降级为「两处都不通时的最后手段」，且只允许旧 CLI 拉起且必须显式警告（§3.5）。**2026-10-19 修订**：DSH 0.2.1 起桌面版端口由系统分配（`--port 0`），固定 19387 只对 ≤0.2.0 成立 ⇒ 端口改为运行时发现（§3.5）
 - V1 不做 IDE 能力反连桥（getDiagnostics 等是 V2）
 - **不追 DSH alpha 的每日变动，但必须同时兼容「当前 stable（0.1.1-rc.x）」与「下一代（0.1.2+ 线协议）」两个 flavor，连接时探测自动切换**（2026-09-02 修订：原「锁定 rc.7+」策略作废——用户将持续升级 DSH 到最新版，协议断代即全插件失效；见 §3.0）
 
@@ -26,10 +26,10 @@
 │  ├ context/：选区/活动文件→content 块   │
 │  └ diff/：dshdiff: 虚拟 scheme provider │
 └────────────┬───────────────────────────┘
-             │ http://127.0.0.1:{19387|3080}/api/*
-             │ ws://127.0.0.1:{19387|3080}/api/remote.mux
+             │ http://127.0.0.1:{desktop:运行时发现|3080}/api/*
+             │ ws://127.0.0.1:{desktop:运行时发现|3080}/api/remote.mux
 ┌────────────┴───────────────────────────┐
-│ 运行中的实例：桌面版 App(19387) / 旧 CLI │
+│ 运行中的实例：桌面版 App(动态端口) / 旧 CLI │
 │ （与 GUI 共享会话、插件、持久化）        │
 └────────────────────────────────────────┘
 ```
@@ -41,7 +41,7 @@
 | fold 放 webview 侧，扩展宿主只转发原始事件 | postMessage 天然增量，规避 dsh-vsc 全量快照 O(n²) |
 | 扩展宿主连协议，webview 不直连 | DSH 信任栅栏拒 webview Origin（Obsidian 版实测 403/1006） |
 | 不依赖 DSH 内部包 | dsh-vsc require 内部 zod schema，DSH 升级即碎 |
-| 附身运行中的实例：**默认 19387 桌面版 App**，其次 3080 旧 CLI（2026-09-30） | 会话/插件与 GUI 共享；桌面版是 0.2.0 且 nightly 自动更新，与「常开桌面版」的实际用法一致；不再固定 3080 |
+| 附身运行中的实例：**默认桌面版 App（端口运行时发现）**，其次 3080 旧 CLI（2026-09-30，端口 2026-10-19 修订） | 会话/插件与 GUI 共享；桌面版是 0.2.1 且 nightly 自动更新，与「常开桌面版」的实际用法一致；0.2.1 起端口每次启动都变，固定地址已不再成立 |
 | 协议双 flavor + 探测切换（2026-09-02） | 用户持续升级 DSH；协议知识集中在 src/connection，webview 对协议变更免疫 |
 
 ## 3. 协议契约（实测，来自 Obsidian 版考古 + rc.7 源码核对）
@@ -110,21 +110,27 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 6. `usage`/`finish` chunk 是元数据，不渲染
 7. 权限 projection 只推变化，初值用 `settings.describe` 补拉
 
-### 3.5 实例选择（2026-09-30：桌面版共存后引入）
+### 3.5 实例选择（2026-09-30 引入；2026-10-19 端口改为运行时发现）
 
-本机同时存在两套 DSH：桌面 Electron App（0.2.0-rc.2）与旧 CLI（0.1.5-rc.1）。两者**共用同一个 `~/.dsh`**（会话/`storages`/凭据都在 `.dsh` 根下，`profiles/<name>/` 只放 cordis 与 node_modules），所以「连接对象」从「固定的 3080」变成「运行中的实例」：
+本机可能同时存在两套 DSH：桌面 Electron App 与旧 CLI。两者**共用同一个 `~/.dsh`**（会话/`storages`/凭据都在 `.dsh` 根下，`profiles/<name>/` 只放 cordis 与 node_modules），所以「连接对象」从「固定的 3080」变成「运行中的实例」：
 
 | 实例 | 地址 | profile | 挂载与限制 |
 |---|---|---|---|
-| 桌面版 App | `http://127.0.0.1:19387` —— **宿主里的字面量**（`dsh-desktop-host/lib/index.js` 传 `args:["--no-open","--port","19387"]`，全 asar 仅此一处，**无端口回退逻辑**：EADDRINUSE 即启动失败而非换端口） | `desktop` | base + web-app + agent-team + auto-review + schedule + memory-loader（功能最全，且 nightly 自动更新） |
+| 桌面版 App | **运行时发现**：0.2.1 起 `dsh-desktop-host/lib/index.js` 传 `args:["--no-open","--host","127.0.0.1","--port","0"]`，端口由系统分配、**每次启动都变**（官方 release note v0.2.1-alpha.1：避免 Windows 保留端口范围导致应用起不来）。≤0.2.0 才是固定 `19387`，现仅作兼容候选。发现方式见下 | `desktop` | base + web-app + agent-team + auto-review + schedule + memory-loader（功能最全，且 nightly 自动更新） |
 | 旧 CLI | `http://127.0.0.1:3080` | `web` | 只挂 base + web-app；**0.1.5 的会话格式 catalog 是 currentVersion 3、无 v4 codec，读不了 2026-09-30 之后桌面版写的 v4 会话**（同日实测：v3 79 个 / v4 9 个） |
+
+**端口发现（`instances.ts` 是唯一判定点）**：
+
+- 候选顺序：**发现到的桌面版端口** → 旧固定 `19387` → 旧 CLI `3080`；逐个 `detectFlavor` 探活（401 也算活），首个活者胜出。
+- 发现方式：**快路径（约 0.2s，不依赖 PowerShell）**＝`tasklist /FI "IMAGENAME eq DeepSeek Harness.exe" /FO CSV /NH` 取 PID → `netstat -ano -p tcp` 里匹配「本地端口 + 对端为通配 `0.0.0.0:0`/`[::]:0` + 末列 PID ∈ 集合」，按行锚定解析（不吃 locale）；**兜底（约 2s，上限 3s）**＝PowerShell `Get-NetTCPConnection`（快路径看到进程却没拿到端口时；含 `Win32_Process` 按安装目录路径找 `node.exe` 宿主；`NO_NETTCPIP`/`DISCOVERY_ERROR` 哨兵让失败可见）。只取**桌面版进程自己的监听端口**，不做全端口扫描。
+- 发现失败（PowerShell 不可用/被策略禁/超时）**不阻塞**：返回空数组 ⇒ 退回固定候选表，并在「没有实例」弹窗里给出可见提示 + 「手动输入地址…」入口（不许只进日志）。
 
 规则：
 
-- **候选是常量表，不做进程→端口扫描**：两个已知候选（19387、3080）都不通才算「没有实例」。`src/connection/instances.ts` 是唯一判定点。
-- **显式优先**：`dsh-vscode.baseUrl` 被用户设过（非默认值）→ 只用它、不探测（逃生舱）。
-- **可见可切换**：状态条恒显当前实例（地址 + profile + 权限预设），命令面板 `DSH: 选择实例` 切换；选择写回 `dsh-vscode.baseUrl`（Global），多窗口靠 `onDidChangeConfiguration` 同步。
-- **切实例必须重建对象**：`DshLifecycle` / `RpcClient` / `Auth` 的 baseUrl 都是构造即固定；`Auth` 的 cookie **按 authority 分键**（cookie 名含 authority 哈希，跨地址必然 401）。
+- **显式优先**：`dsh-vscode.baseUrl` 被用户设过（非默认值）→ 只用它、不探测、不跑发现（逃生舱）；连不上时提示里提供「改用自动发现」按钮，但**只有用户点才会清空**该设置。
+- **端口变化自愈**：当前 generation 处于 `disconnected` 时按指数退避（5s→30s）重跑 `resolveInstance`，发现新地址才重建 generation；pinned 不启用。桌面版重启换端口后无需用户操作。
+- **可见可切换**：状态条恒显当前实例（地址 + profile + 权限预设），命令面板 `DSH: 选择实例` 切换；选择写回 `dsh-vscode.baseUrl`（Global），多窗口靠 `onDidChangeConfiguration` 同步。**但「发现的动态端口」不允许钉死**：选中它＝回到自动选择（写回 `undefined`），因为该端口下次启动即失效。
+- **切实例必须重建对象**：`DshLifecycle` / `RpcClient` / `Auth` 的 baseUrl 都是构造即固定；`Auth` 的 cookie **按 authority 分键**（cookie 名含 authority 哈希，跨地址必然 401）。重建 `SessionManager` 时把当前会话 id 传进去，首个 connect 复原该会话（否则会跳到 firstNonBlank，用户感知为"会话被换掉"）。
 - **兜底不默认起服务**：两处都不通时提示「打开桌面版 App」；`autoStart` 仍保留旧 CLI 拉起，但**必须显式警告**：①会与运行中的桌面版对同一个会话库形成第二个写者；②0.1.5 少三组 bundle 且读不了 v4 会话。
 - **红线**：不得把「用桌面版 CLI 起 web profile」当常规兜底——它自带 pnpm + 0.2.0 的 installAnchor，会重装 `~/.dsh/profiles/node_modules`（现为 0.1.5 树），**可能永久打破旧 CLI**；`dsh.cmd` 也不能用 `Start-Process -FilePath` 直接拉（CreateProcess 不执行批处理）。
 
@@ -183,7 +189,7 @@ DSH 0.1.2 起线协议破坏性变更。插件同时支持两个 flavor，连接
 ### V1（本 spec 范围）
 
 **F1 连接与生命周期**
-- activate → **解析实例**（§3.5：显式 baseUrl 优先，否则按 19387 → 3080 顺序探测，谁应答连谁）→ 探活失败则显示状态条与「选择实例」入口；两处都不通且 `autoStart` 开 → 提示「打开桌面版 App」（主）/「启动本地 dsh web（旧版，有警告）」（次）→ Start-Process 脱离启动，轮询就绪 120s
+- activate → **解析实例**（§3.5：显式 baseUrl 优先；否则先运行时发现桌面版端口，再回退 19387 → 3080，谁应答连谁）→ 探活失败则显示状态条与「选择实例」入口；都不通且 `autoStart` 开 → 提示「打开桌面版 App」（主，启动后等发现到的端口）/「启动本地 dsh web（旧版，有警告）」（次）/「手动输入地址…」→ Start-Process 脱离启动，轮询就绪 120s；断线期间按 5s→30s 退避自动重新解析（pinned 除外）
 - 状态机：connecting / connected / disconnected / starting，状态条常显并带当前实例标识
 - 断线指数退避重连（1s 起步，上限 30s），重连后全量对账；切实例 = 重建 lifecycle/manager（状态全清）
 
@@ -267,6 +273,8 @@ dsh-vscode/
 - respond 回执失败：`{accepted:false}` 不是异常，按 reason 分支——`not-pending` 撤卡提示他端已处理，`bad-response` 记诊断日志
 - WS 断开：状态条变 disconnected，UI 保留已渲染内容，重连成功后 history 对账增量补
 - 拉起失败（120s 未就绪）：横幅报错 + 打开日志指引
+- **端口发现失败**（PowerShell 被禁/超时/非 Windows）：不阻塞连接，退回固定候选；「没有实例」弹窗里带可见提示与「手动输入地址…」入口
+- **桌面版换端口**（每次启动）：断线看门狗按 5s→30s 退避重新解析，发现新地址即重建 generation 并复原当前会话
 - webview 崩溃/重载：扩展宿主重发当前会话 history 重建视图
 
 **已知限制**：拉起命令（Start-Process）为 Windows 专有，V1 不做跨平台（当前用户环境即 Windows）；需要时再补 darwin/linux 分支。
@@ -281,7 +289,8 @@ dsh-vscode/
 ## 8. 验证
 
 - `pnpm compile` / `pnpm build` 零错误
-- `pnpm smoke`：连**当前实例**（默认 19387）依次调 `session/list` → 建会话 → prompt("回复 ok") → 收到 turn/end → cancel 清理，全绿。桌面版不落 token，必须走 `--base-url http://127.0.0.1:19387 --from-credentials`（从 `~/.dsh/.credentials.yaml` 铸 cookie）
+- `pnpm smoke`：连**当前实例**依次调 `session/list` → 建会话 → prompt("回复 ok") → 收到 turn/end → cancel 清理，全绿。桌面版端口每次启动都变 ⇒ **不要写死端口**：`$u = node scripts/which-port.cjs; node scripts/smoke.mjs --base-url $u --from-credentials`（cookie 从 `~/.dsh/.credentials.yaml` 铸，不落 token）
 - `pnpm args:audit`：连桌面版审参数漂移必须用 Electron 当 node 并把 `DSH_ROOT` 指到 asar（否则 `existsSync` 在 asar 上为 false → **静默 SKIP exit 0，等于没审**）；命令见 AGENTS.md
 - `node scripts/locate-regress.cjs`（无 pnpm script）
+- `node scripts/instances-regress.cjs`：离线 17 项 + `--live` 真机 1 项（真机项不自动 skip——静默 SKIP 会重演 args:audit 的老坑）
 - 手测清单（每个 vsix 必过）：连接常驻实例 ✓ 流式输出不卡（长回答不掉帧）✓ 审批卡应答后 DSH 侧确实继续执行（GUI 同屏验证闭环）✓ 点击看原生 diff ✓ 选区附加真实进 prompt（DSH GUI 侧看会话确认）✓ 手动杀 dsh 进程→重启→插件自动重连且会话内容对账不丢 ✓ 双窗口（或窗口+GUI）同时弹审批，一端应答后另一端自动撤卡 ✓

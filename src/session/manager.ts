@@ -71,6 +71,10 @@ export class SessionManager {
   private sessionModel = new Map<string, ModelChoice>();
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
   private enrichInFlight = false;
+  /** Session to re-open on the FIRST connect of this generation (instance switch
+   *  or desktop-port move). Consumed once, so ordinary reconnects keep their own
+   *  current-session logic. */
+  private restoreSession: string | undefined;
 
   /** The diff collector subscribes to current-session events. */
   bindDiff(diff: DiffService): void {
@@ -84,7 +88,10 @@ export class SessionManager {
     /** Per-workspace memento: scopes the "last used model" default to THIS
      *  project, so cross-project global-last leakage never lands here. */
     private readonly wsMemento?: vscode.Memento,
+    /** Carry the user's open session across a connection-generation rebuild. */
+    restoreSession?: string,
   ) {
+    this.restoreSession = restoreSession;
     this.loadPersistedTitles();
     const ev = lifecycle.events;
     ev.onStreamsReady(() => void this.onConnected());
@@ -111,6 +118,16 @@ export class SessionManager {
       }
       await this.refreshSessions();
       void this.listWorkspaces(); // pin/archive id sets (design.md §3.6)
+      // A rebuilt generation (instance switch / desktop-port move) must re-open
+      // the session the user was looking at, not jump to firstNonBlank.
+      const restore = this.restoreSession;
+      this.restoreSession = undefined;
+      if (restore && this.sessionRows.some((r) => r.sessionId === restore)) {
+        await this.switchSession(restore);
+        this.postPermissionOf(restore);
+        await this.refreshPresets();
+        return;
+      }
       // Reaffirm current session if it still exists, else pick/create.
       if (this.currentSession && this.sessionRows.some((r) => r.sessionId === this.currentSession)) {
         await Promise.all([this.loadHistory(this.currentSession), this.refreshModels(this.currentSession)]);

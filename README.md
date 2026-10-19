@@ -2,7 +2,7 @@
 
 > Marketplace 扩展名 `dsh-web-vscode`（`dsh-vscode` 在市场已被他人占用）；GitHub 仓库名保持 `dsh-vscode`。
 
-VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh web`，默认 127.0.0.1:3080）。与 DSH 浏览器 GUI 共享同一实例：会话、插件生态（genui / agent-teams / workflow）、持久化全部互通。
+VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 实例：优先附身**桌面版 App**（DSH 0.2.1 起它的本地端口由系统分配、每次启动都变，插件运行时自动发现），其次旧 CLI `dsh web`（默认 127.0.0.1:3080）。与 DSH 浏览器 GUI 共享同一实例：会话、插件生态（genui / agent-teams / workflow）、持久化全部互通。
 
 ## 功能
 
@@ -18,14 +18,14 @@ VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github
 
 ## 前置
 
-1. 本机已装 `@deepseek-ai/dsh` 并可运行 `dsh web`（默认端口 3080）
+1. 本机装有 **DSH 桌面版 App**（推荐；端口运行时自动发现，无需配置），或可运行 `dsh web` 的旧版 CLI（默认端口 3080）
 2. 模型 / 凭据在 DSH 侧配置（`~/.dsh`），插件不经手密钥
 
 ## 配置
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| `dsh-vscode.baseUrl` | `http://127.0.0.1:3080` | dsh web 地址 |
+| `dsh-vscode.baseUrl` | `http://127.0.0.1:3080` | 逃生舱：留默认值＝自动（先发现运行中的桌面版端口，再试旧版 3080）；填了固定地址＝只连它，不再自动发现 |
 | `dsh-vscode.autoStart` | `true` | 探测不到时尝试拉起（Windows） |
 | `dsh-vscode.nodePath` | 自动探测 | 拉起用的 node.exe；留空按 Node 安装目录 → PATH 依次探测 |
 | `dsh-vscode.dshBinPath` | 自动探测 | 拉起用的 dsh CLI 入口（`…/node_modules/@deepseek-ai/dsh/lib/bin.js`）；留空按 `%APPDATA%\npm` → Node 全局前缀 → `~/dsh` → PATH → 当前工作区 → `npm root -g` 依次探测 |
@@ -38,7 +38,7 @@ VSCode 客户端插件，连接本机常驻的 [DeepSeek Harness](https://github
 pnpm install
 pnpm compile   # 类型检查
 pnpm build     # esbuild 打包
-pnpm smoke     # 协议冒烟（需 dsh web 在跑）
+pnpm smoke     # 协议冒烟（需实例在跑；桌面版端口用 node scripts/which-port.cjs 取，别写死）
 pnpm package   # 打 .vsix
 ```
 

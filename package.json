@@ -2,7 +2,7 @@
   "name": "dsh-web-vscode",
   "displayName": "DeepSeek Harness (DSH)",
   "description": "VSCode client for DeepSeek Harness: chat, approvals, native diffs, real context attach — sharing the same dsh web instance as the GUI.",
-  "version": "0.21.2",
+  "version": "0.21.4",
   "publisher": "wurui",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -99,7 +99,7 @@
         "dsh-vscode.baseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:3080",
-          "description": "Escape hatch: pin the DSH instance to connect to. Leave it at the default value and the extension auto-probes the desktop App (127.0.0.1:19387) first, then a legacy `dsh web` (127.0.0.1:3080). Setting it to any other value disables auto-probing. \"DSH: Select DSH Instance\" writes this setting."
+          "description": "Escape hatch: pin the DSH instance to connect to. Leave it at the default value and the extension auto-probes a running desktop App first (its local port is discovered at runtime — DSH 0.2.1+ lets the OS assign it on every launch), then a legacy `dsh web` (127.0.0.1:3080). Setting it to any other value disables auto-probing. \"DSH: Select DSH Instance\" writes this setting."
         },
         "dsh-vscode.autoStart": {
           "type": "boolean",
@@ -139,7 +139,10 @@
     "regress:fold": "node scripts/fold-regress.cjs",
     "regress:fence": "node scripts/fence-regress.cjs",
     "regress:pathlink": "node scripts/pathlink-regress.cjs",
-    "regress:all": "node scripts/fold-regress.cjs && node scripts/fence-regress.cjs && node scripts/pathlink-regress.cjs && node scripts/locate-regress.cjs && node scripts/model-regress.cjs && node scripts/repair-regress.cjs",
+    "regress:instances": "node scripts/instances-regress.cjs",
+    "regress:instances:live": "node scripts/instances-regress.cjs --live",
+    "which-port": "node scripts/which-port.cjs",
+    "regress:all": "node scripts/fold-regress.cjs && node scripts/fence-regress.cjs && node scripts/pathlink-regress.cjs && node scripts/locate-regress.cjs && node scripts/model-regress.cjs && node scripts/repair-regress.cjs && node scripts/instances-regress.cjs",
     "package": "pnpm build && vsce package --no-dependencies"
   },
   "devDependencies": {

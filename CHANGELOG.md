@@ -4,6 +4,32 @@
 > 市场名 `dsh-web-vscode`（`dsh-vscode` 在市场被他人占用）；仓库 GitHub `wuruihi/dsh-vscode`。
 > 约定：每个版本一个 vsix 本地安装验证；市场发布按批次手动上传，未必逐版本。
 
+## v0.21.4 — 修：DSH 0.2.1 桌面版换端口后插件连不上（端口改运行时发现）
+
+**用户报**：桌面版更新到 0.2.1-rc.2 后，VSCode 面板一直连不上。
+
+**根因（官方有意改动，不是 bug）**：DSH `v0.2.1-alpha.1` 起，桌面版宿主用 `--no-open --host 127.0.0.1 --port 0` 启动，**端口由系统分配、每次启动都变**（release note：「桌面端默认使用系统分配的端口，避免 Windows 保留端口范围导致应用无法启动」）。插件 0.21.2 的候选表还是常量 `19387 / 3080`，于是日志 `[instances] no instance answered`、面板恒 disconnected。本机实测：桌面版只监听 `59204`，`19387` 无监听，`app.asar` 里已无 `19387` 字样。
+
+**修法（不用回退版本）**
+
+- `instances.ts` 新增 `discoverDesktopPorts`：**快路径约 0.17s**＝`tasklist /FI "IMAGENAME eq DeepSeek Harness.exe" /FO CSV /NH` 取 PID → `netstat -ano -p tcp` 匹配「本地端口 + 对端通配 `0.0.0.0:0`/`[::]:0` + 末列 PID ∈ 集合」（按行锚定解析、不吃 locale、不依赖 PowerShell）；**兜底约 2s（上限 3s）**＝PowerShell `Get-NetTCPConnection`（快路径看到进程却没拿到端口时；含按安装目录找 `node.exe` 宿主，`NO_NETTCPIP`/`DISCOVERY_ERROR` 哨兵让失败可见）。只取桌面版进程自己的监听，**不扫全端口**。
+- 候选顺序：发现到的桌面版端口（升序）→ 旧固定 `19387`（≤0.2.0 兼容）→ 旧 CLI `3080`；pinned `baseUrl` 仍然最高优先且**不跑发现**。
+- 新增 `waitForDesktopInstance`：「打开桌面版」后轮询「发现 → 探活」，命中才 `wireInstance`；带 `permissionPreset`，不再丢 `danger-full-access` 警告。等待窗用 `acquiring` 互斥（否则看门狗与等待会各建一代连接），`wireInstance` 加同址幂等守卫。
+- 断线看门狗：`disconnected` 时按 **5s→30s 指数退避**重新解析，发现新地址才重建 generation（pinned / `autoStart=false` 不启用）；桌面实例不再叠加 `lifecycle.keepDetecting` 的同址轮询；重建时把当前会话 id 传给新 `SessionManager`，首个 connect 复原该会话（否则会跳到 firstNonBlank，感知为"会话被换掉"）。
+- 动态端口**不允许钉死**：`DSH: Select DSH Instance` 里选中发现的桌面版实例＝回到自动选择（**清掉 Global / Workspace / Folder 三级 baseUrl** 并 toast；只写 Global 会被工作区值盖住＝点了没反应）；新增「手动输入地址…」入口（PowerShell 被策略禁时的唯一出口）；pinned 地址连不上时弹窗给「改用自动发现」按钮（只有用户点才清空设置）；失败分支把状态条从 starting 复位为 disconnected。
+- `scripts/smoke.mjs`：teardown 抽成函数 + `uncaughtException`/`unhandledRejection` 兜底，链条中途抛错也不再留 `[smoke-test]` 会话。
+- 新增 `scripts/which-port.cjs` 与 `regress:instances`：**验证命令不再写死端口**，统一 `$u = node scripts/which-port.cjs; node scripts/smoke.mjs --base-url $u --from-credentials`。
+
+**验证（本机 0.2.1-rc.2 / 网关 59204）**
+
+- `tsc`（src + webview）0 错；`esbuild` 构建通过。
+- `regress:all` 全绿：fold 24/24、fence 8/8、pathlink 8/8、locate 25/25、model 23/23、repair 14/14、**instances 20/20（含 `--live` 真机项：发现 59204 并选中；含动态 id 契约断言）**。
+- 端口发现实测 **175ms / 169ms**（替换前 PowerShell 单次 1.8–2.5s）。
+- `node scripts/smoke.mjs --base-url http://127.0.0.1:59204 --from-credentials`：**16/16 PASS**（flavor v012、cookie 铸造、remote.mux、`$events` ready、workspace/follow、session/create + prompt「收到」+ turn/end、modelCatalog、rename），teardown 断言无会话残留。
+- vsix `0.21.4` 已打包并安装（`wurui.dsh-web-vscode-0.21.4`）；**待用户 `Developer: Reload Window` 后手测**：状态条 connected、面板列会话、发一条消息、看一次 diff；以及桌面版重启换端口后 30s 内自愈。
+
+**流程**：按仓库约定先写方案 `docs/plan-0.21.3-port-discovery.md`，另起两个独立子代理（设计视角 + 技术视角，只读、不继承主会话历史）审查；两轮意见已逐条采纳：进程匹配/降级可见/单退避循环/重连丢会话/双重建竞态/状态条卡 starting/工作区级 baseUrl 遮蔽/发现解析过宽/超时与文档数字/回归恒真断言/smoke 崩溃不清理/验证命令硬编码。技术审查建议的「netstat+tasklist 替代 PowerShell」已采用（2.2s → 0.17s）。
+
 ## v0.21.2 — 修：面板丢了两个入口（新建会话 / 工作区管理）
 
 **用户报**：插件面板上没有创建新会话的入口。

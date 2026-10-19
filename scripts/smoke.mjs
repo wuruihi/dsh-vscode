@@ -47,6 +47,45 @@ let cookie = "";
 // this leaves "[smoke-test] 可删除" sessions in the sidebar permanently.
 const smokeSessionIds = [];
 
+// ---------- teardown: smoke sessions leave no residue ----------
+// Archive hides a session from the sidebar; deleting the files is what actually
+// removes it (DSH has no session-delete API). Runs from the normal path AND from
+// the crash handlers below: an exception mid-chain must not leave a
+// "[smoke-test] 可删除" session behind.
+let tornDown = false;
+async function teardownSmoke() {
+  if (tornDown) return;
+  tornDown = true;
+  if (smokeSessionIds.length === 0) return;
+  try {
+    const { logDirOf, purgeSessionFiles } = await import("./session-purge.mjs");
+    let removedCount = 0;
+    for (const sid of smokeSessionIds) {
+      try {
+        await call("workspace/archiveSession", { sessionId: sid }, 15_000, "v012");
+      } catch {
+        /* legacy host, or already archived — the file cleanup below still applies */
+      }
+      removedCount += purgeSessionFiles(sid).length;
+    }
+    ok(
+      "teardown: smoke sessions archived + files deleted (no residue)",
+      smokeSessionIds.every((sid) => logDirOf(sid) === null),
+      `${smokeSessionIds.length} session(s), ${removedCount} path(s) removed`,
+    );
+  } catch (err) {
+    console.error("[smoke] teardown failed:", err);
+  }
+}
+process.on("uncaughtException", (err) => {
+  console.error(err);
+  void teardownSmoke().finally(() => process.exit(1));
+});
+process.on("unhandledRejection", (err) => {
+  console.error(err);
+  void teardownSmoke().finally(() => process.exit(1));
+});
+
 function ok(name, cond, detail = "") {
   results.push({ name, pass: !!cond, detail });
   console.log(`${cond ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
@@ -601,26 +640,8 @@ if (det.flavor === "legacy") {
 }
 
 // ---------- teardown: smoke sessions leave no residue ----------
-// Archive hides a session from the sidebar; deleting the files is what actually
-// removes it (DSH has no session-delete API). Both run best-effort: a cleanup
-// failure must not turn a passing smoke run red.
-if (smokeSessionIds.length > 0) {
-  const { logDirOf, purgeSessionFiles } = await import("./session-purge.mjs");
-  let removedCount = 0;
-  for (const sid of smokeSessionIds) {
-    try {
-      await call("workspace/archiveSession", { sessionId: sid }, 15_000, "v012");
-    } catch {
-      /* legacy host, or already archived — the file cleanup below still applies */
-    }
-    removedCount += purgeSessionFiles(sid).length;
-  }
-  ok(
-    "teardown: smoke sessions archived + files deleted (no residue)",
-    smokeSessionIds.every((sid) => logDirOf(sid) === null),
-    `${smokeSessionIds.length} session(s), ${removedCount} path(s) removed`,
-  );
-}
+// Defined next to `smokeSessionIds` (also reachable from the crash handlers).
+await teardownSmoke();
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n=== SMOKE ${failed.length === 0 ? "PASSED" : "FAILED"}: ${results.length - failed.length}/${results.length} ===`);

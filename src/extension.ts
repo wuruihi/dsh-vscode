@@ -2,12 +2,13 @@ import * as vscode from "vscode";
 import { DshLifecycle, type ConnState } from "./connection/lifecycle.js";
 import {
   DEFAULT_BASE_URL,
-  DESKTOP_APP_PORT,
   LOCAL_WEB_PORT,
   candidateInstances,
   describeInstance,
   desktopAppExeResolved,
+  lastDesktopDiscoveryNote,
   resolveInstance,
+  waitForDesktopInstance,
   type DshInstance,
 } from "./connection/instances.js";
 import { SessionManager } from "./session/manager.js";
@@ -43,10 +44,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    *  (its own probe fails by definition, which would re-prompt in a loop). */
   let offerSuppressedUntil = 0;
   let reconnectSeq = 0;
+  /** Disconnected watchdog: the desktop App assigns a fresh port on every launch
+   *  (DSH 0.2.1+), so a dead generation must re-resolve instead of polling one
+   *  frozen baseUrl forever. Backs off 5s → 30s while nothing answers, and is
+   *  cleared on connected / dispose / pinned. */
+  let rediscoverTimer: NodeJS.Timeout | undefined;
+  let rediscovering = false;
+  let rediscoverDelayMs = 5000;
+  /** True while "打开桌面版" owns the discovery (waitForDesktopInstance). The
+   *  watchdog must not wire a second generation in that window. */
+  let acquiring = false;
 
   context.subscriptions.push(panel, diff, ideBridge);
   context.subscriptions.push({
     dispose: () => {
+      stopRediscovery();
       for (const d of instanceSubs) d.dispose();
       instanceSubs = [];
       lifecycle?.dispose();
@@ -140,6 +152,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   function wireInstance(instance: DshInstance): void {
+    // Idempotent: a watchdog tick and the explicit "打开桌面版" wait can race;
+    // never rebuild an already-live generation for the same address.
+    if (lifecycle && instance.baseUrl === baseUrl && lifecycle.currentState !== "disconnected") {
+      log(`[extension] already connected to ${instance.baseUrl}; skip re-wire`);
+      return;
+    }
+    /** Keep the user's open session across a generation rebuild (instance switch
+     *  or desktop-port move). Consumed once by the new manager's first connect. */
+    const restoreSession = manager?.current;
     for (const d of instanceSubs) d.dispose();
     instanceSubs = [];
     try {
@@ -149,9 +170,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     currentInstance = instance;
     baseUrl = instance.baseUrl;
-    const generation = new DshLifecycle(baseUrl);
+    const generation = new DshLifecycle(baseUrl, instance.kind !== "desktop-app");
     lifecycle = generation;
-    manager = new SessionManager(generation, { post: (m) => panel.post(m) }, context.globalState, context.workspaceState);
+    manager = new SessionManager(
+      generation,
+      { post: (m) => panel.post(m) },
+      context.globalState,
+      context.workspaceState,
+      restoreSession,
+    );
     manager.bindDiff(diff);
 
     const ev = generation.events;
@@ -164,6 +191,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // legacy hosts have no pin/unpin/unarchive endpoints.
         panel.post({ t: "caps", flavor: generation.currentFlavor ?? "legacy" });
         postPrefs();
+        // The desktop port changes on every App launch (DSH 0.2.1+): while the
+        // current generation is dead, look for a new address; stop once hooked.
+        if (s === "connected") stopRediscovery();
+        else if (s === "disconnected") scheduleRediscovery();
       }),
       // Connection problems that need the user's eyes (v012 auth, unknown protocol).
       ev.onProblem((message: string) => {
@@ -190,9 +221,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    *  keep "start a legacy local server" available but clearly secondary. */
   async function offerInstance(): Promise<void> {
     if (pinned) {
-      const pick = await vscode.window.showWarningMessage(`DSH: 自定义地址 ${baseUrl} 没有响应。`, "重试", "选择实例…");
+      const pick = await vscode.window.showWarningMessage(
+        `DSH: 自定义地址 ${baseUrl} 没有响应。`,
+        "重试",
+        "选择实例…",
+        "改用自动发现",
+      );
       if (pick === "重试") void lifecycle.init();
       else if (pick === "选择实例…") void pickInstance();
+      else if (pick === "改用自动发现") {
+        // Only the user may drop the escape hatch; the config event reconnects.
+        await clearBaseUrlScopes();
+      }
       return;
     }
     const appPath = await desktopAppExeResolved();
@@ -210,28 +250,56 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const buttons = [
       ...(appPath ? ["打开桌面版"] : []),
       "选择实例…",
+      "手动输入地址…",
       ...(haveLegacyCli ? ["启动本地 dsh web（旧版）"] : []),
     ];
+    const discoveryNote = lastDesktopDiscoveryNote();
     const pick = await vscode.window.showWarningMessage(
-      `DSH: 没有检测到运行中的实例（桌面版 ${DESKTOP_APP_PORT}` +
-        `${haveLegacyCli ? ` 与旧版 ${LOCAL_WEB_PORT}` : ""} 都没有响应）。` +
+      `DSH: 没有检测到运行中的实例（桌面版${haveLegacyCli ? ` 与旧版 ${LOCAL_WEB_PORT}` : ""} 都没有响应）。` +
         (appPath ? "可以打开桌面版 App —— 功能最全，且与 GUI 共享会话。" : "") +
+        (discoveryNote ? `（${discoveryNote}，可用“手动输入地址…”）` : "") +
         (haveLegacyCli ? "" : "（本机未检测到旧版 dsh CLI，已隐藏“启动旧版”入口。）"),
       ...buttons,
     );
     if (pick === "打开桌面版" && appPath) {
       offerSuppressedUntil = Date.now() + 90_000;
-      const ok = await lifecycle.launchDesktopApp(appPath);
-      if (!ok) void vscode.window.showErrorMessage("DSH: 桌面版没有在本地址就绪，可查看日志或用 “DSH: Select DSH Instance”。");
+      status.text = statusText.starting;
+      status.tooltip = tooltipFor("starting");
+      acquiring = true;
+      // The App's gateway port is assigned by the OS at launch (DSH 0.2.1+), so
+      // wait for discovery instead of polling one fixed address. `acquiring`
+      // keeps the watchdog from wiring a second generation in this window.
+      try {
+        const attached = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "DSH: 正在启动桌面版并等待本地端口…" },
+          () => waitForDesktopInstance(appPath, { home }),
+        );
+        if (attached) {
+          wireInstance(attached);
+        } else {
+          status.text = statusText.disconnected;
+          status.tooltip = tooltipFor("disconnected");
+          void vscode.window.showErrorMessage(
+            "DSH: 已启动桌面版，但 60s 内没有发现它的本地端口，可查看日志或用 “DSH: Select DSH Instance”。",
+          );
+        }
+      } finally {
+        acquiring = false;
+      }
+      scheduleRediscovery(); // keep looking (no-op when connected)
       return;
     }
     if (pick === "选择实例…") {
       void pickInstance();
       return;
     }
+    if (pick === "手动输入地址…") {
+      void manualAddress();
+      return;
+    }
     if (pick === "启动本地 dsh web（旧版）") {
       // Retarget to 3080 FIRST: startDsh() starts whatever port THIS lifecycle
-      // points at, and the default generation points at the desktop 19387.
+      // points at, and the current generation may point at a dead desktop port.
       const legacy = candidateInstances(appPath).find((c) => c.kind === "local-web");
       offerSuppressedUntil = Date.now() + 130_000; // the readiness poll window
       if (legacy) wireInstance(legacy);
@@ -239,24 +307,69 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
 
+  /** Drop a pinned baseUrl at EVERY settings scope. Writing only Global is a
+   *  no-op when a workspace/folder value shadows it (the same trap the
+   *  defaultModel control hit in 0.21.1). */
+  async function clearBaseUrlScopes(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration("dsh-vscode");
+    const info = cfg.inspect<string>("baseUrl");
+    if (info?.workspaceFolderValue !== undefined) {
+      await cfg.update("baseUrl", undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+    }
+    if (info?.workspaceValue !== undefined) {
+      await cfg.update("baseUrl", undefined, vscode.ConfigurationTarget.Workspace);
+    }
+    if (info?.globalValue !== undefined) {
+      await cfg.update("baseUrl", undefined, vscode.ConfigurationTarget.Global);
+    }
+  }
+
+  /** Manual escape hatch: pin any address by hand (the only way out if port
+   *  discovery is blocked by policy and the App is running on an unknown port). */
+  async function manualAddress(): Promise<void> {
+    const input = await vscode.window.showInputBox({
+      title: "DSH: 手动输入实例地址",
+      prompt: "例如 http://127.0.0.1:59204（状态条 tooltip 或面板里也显示当前地址）",
+      value: baseUrl.startsWith(DEFAULT_BASE_URL) ? "" : baseUrl,
+      validateInput: (v) => (/^https?:\/\/\S+$/i.test(v.trim()) ? undefined : "需以 http:// 或 https:// 开头"),
+    });
+    if (!input) return;
+    const url = input.trim().replace(/\/+$/, "");
+    log(`[extension] manual instance address: ${url}`);
+    // The config event reconnects; no explicit reconnect call needed.
+    await vscode.workspace.getConfiguration("dsh-vscode").update("baseUrl", url, vscode.ConfigurationTarget.Global);
+  }
+
   /** Quick pick of every known instance (live state probed now) + auto mode. */
   async function pickInstance(): Promise<void> {
     const appPath = await desktopAppExeResolved();
     const resolution = await resolveInstance({ home, explicitBaseUrl: "", appExe: () => appPath });
-    type Item = vscode.QuickPickItem & { auto?: boolean; instance?: DshInstance };
+    type Item = vscode.QuickPickItem & { auto?: boolean; instance?: DshInstance; manual?: boolean };
     const items: Item[] = [
       {
         label: "$(sync) 自动选择",
-        description: `优先桌面版 ${DESKTOP_APP_PORT}，其次旧版 ${LOCAL_WEB_PORT}`,
+        description: `优先桌面版（运行时发现端口），其次旧版 ${LOCAL_WEB_PORT}`,
         detail: "未手动指定 baseUrl 时生效（推荐）",
         auto: true,
       },
       ...resolution.candidates.map((c) => ({
         label: `${c.running ? "$(pass-filled)" : "$(circle-slash)"} ${c.label}`,
         description: describeInstance(c),
-        detail: c.running ? "运行中" : c.kind === "desktop-app" ? "未运行 —— 选中后可打开桌面版 App" : "未运行",
+        detail: c.running
+          ? c.kind === "desktop-app" && c.id !== "desktop-app"
+            ? "运行中 —— 端口每次启动会变，选中=回到自动选择"
+            : "运行中"
+          : c.kind === "desktop-app"
+            ? "未运行 —— 选中后可打开桌面版 App"
+            : "未运行",
         instance: c,
       })),
+      {
+        label: "$(edit) 手动输入地址…",
+        description: "端口自动发现被策略禁止时用",
+        detail: "写回 dsh-vscode.baseUrl（固定地址，不再自动发现）",
+        manual: true,
+      },
     ];
     const pick = await vscode.window.showQuickPick(items, {
       title: "DSH: 选择要连接的实例（自动选择会写回默认 baseUrl）",
@@ -264,12 +377,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       matchOnDetail: true,
     });
     if (!pick) return;
-    const target = pick.auto ? undefined : pick.instance?.baseUrl;
+    if (pick.manual) {
+      await manualAddress();
+      return;
+    }
+    // A discovered (dynamic) desktop port must NOT be pinned: it dies with the
+    // App's next launch. Selecting it means "stay on auto", which rediscovers.
+    const dynamicDesktop = !!pick.instance && pick.instance.kind === "desktop-app" && pick.instance.id !== "desktop-app";
+    if (dynamicDesktop) {
+      log(`[extension] dynamic desktop port ${pick.instance?.baseUrl} selected → staying in auto mode`);
+      void vscode.window.showInformationMessage("DSH: 桌面版端口每次启动会变，已保持自动选择（不钉死地址）。");
+    }
+    const target = pick.auto || dynamicDesktop ? undefined : pick.instance?.baseUrl;
     const cfg = vscode.workspace.getConfiguration("dsh-vscode");
-    const before = cfg.inspect<string>("baseUrl")?.globalValue ?? DEFAULT_BASE_URL;
-    await cfg.update("baseUrl", target, vscode.ConfigurationTarget.Global);
-    // No config event fires when the value did not actually change — reconnect here.
-    if ((target ?? DEFAULT_BASE_URL) === before) void reconnect();
+    const before = cfg.get<string>("baseUrl", DEFAULT_BASE_URL);
+    if (target === undefined) await clearBaseUrlScopes();
+    else await cfg.update("baseUrl", target, vscode.ConfigurationTarget.Global);
+    // A config event reconnects when the effective value changed; when it did
+    // not (e.g. "自动选择" was already active) reconnect manually.
+    if (cfg.get<string>("baseUrl", DEFAULT_BASE_URL) === before) void reconnect();
   }
 
   /** Resolve the instance (explicit baseUrl wins, else probe desktop → legacy)
@@ -289,6 +415,50 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       log(`[extension] nothing running; falling back to ${target.label} (${target.baseUrl})`);
     }
     wireInstance(target);
+  }
+
+  /** Stop the disconnected watchdog (connected / dispose). */
+  function stopRediscovery(): void {
+    if (rediscoverTimer) {
+      clearTimeout(rediscoverTimer);
+      rediscoverTimer = undefined;
+    }
+    rediscoverDelayMs = 5000;
+  }
+
+  /** Schedule the next re-resolve. Cheap by contract: one discovery per attempt,
+   *  exponential backoff (5s → 30s) so a long-stopped App does not keep a
+   *  PowerShell scan running every few seconds. Skipped while pinned (the escape
+   *  hatch must never be second-guessed). */
+  function scheduleRediscovery(delayMs = rediscoverDelayMs): void {
+    if (rediscoverTimer || pinned || acquiring) return;
+    // autoStart=false means "do not hunt for an instance"; respect it here too.
+    if (!vscode.workspace.getConfiguration("dsh-vscode").get<boolean>("autoStart", true)) return;
+    rediscoverTimer = setTimeout(() => {
+      rediscoverTimer = undefined;
+      void rediscoverTick();
+    }, delayMs);
+  }
+
+  /** Re-resolve the instance while disconnected; rewire only on a NEW address. */
+  async function rediscoverTick(): Promise<void> {
+    if (rediscovering || acquiring || pinned || !lifecycle || lifecycle.currentState !== "disconnected") return;
+    rediscovering = true;
+    try {
+      const resolution = await resolveInstance({ home, explicitBaseUrl: "" });
+      const found = resolution.instance;
+      if (found && found.baseUrl !== baseUrl) {
+        log(`[extension] instance moved to ${found.baseUrl}; re-wiring`);
+        stopRediscovery();
+        wireInstance(found);
+        return;
+      }
+    } catch (err) {
+      warn(`[extension] rediscovery failed: ${String(err)}`);
+    } finally {
+      rediscovering = false;
+    }
+    scheduleRediscovery((rediscoverDelayMs = Math.min(rediscoverDelayMs * 2, 30_000)));
   }
 
   // Wire webview -> manager.

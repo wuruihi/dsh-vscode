@@ -4,7 +4,7 @@ DSH（DeepSeek Harness）的 VSCode 客户端插件。协议客户端 + IDE 上�
 
 ## 项目定位与边界
 
-- **连接路线（已定，2026-09-30 修订）**：**附身运行中的常驻实例**，不 spawn 第二写者、不做 broker、不做端口扫描。候选固定两个：桌面版 Electron App（`127.0.0.1:19387`，**端口是硬编码常量**，无回退）与旧 CLI `dsh web`（`3080`）。默认优先桌面版（自动更新到最新）；两者都在时状态栏 + `DSH: Select DSH Instance` 可切换；`dsh-vscode.baseUrl` 显式设置永远最高优先。都没起 → 提示"打开桌面版 App"（兜底，App 未装则退到一键拉起旧版 3080）。**红线：绝不用桌面版 CLI 起 `web` profile**——它的 bundled pnpm + 0.2.0 installAnchor 会把 `~/.dsh/profiles/node_modules`（现在是 0.1.5 树）重装，永久破坏旧 CLI。契约见 docs/design.md §3.5。**2026-09-30 更新：用户已删除旧 CLI（`C:\Users\wurui\dsh`）⇒ 本机只剩桌面版实例；3080 候选、`autoStart`、`startDsh` 兜底代码全部保留（重装旧 CLI 即自动恢复），但"启动旧版"入口仅在能解析到 CLI 时才提供。**
+- **连接路线（已定，2026-09-30 修订；2026-10-19 端口修订）**：**附身运行中的常驻实例**，不 spawn 第二写者、不做 broker。**桌面版端口改为运行时发现**：DSH 0.2.1 起 `dsh-desktop-host` 用 `--port 0`，端口由系统分配、每次启动都变（≤0.2.0 才是固定 19387，现仅兼容候选）；插件用「桌面版进程 → 监听端口」发现（`src/connection/instances.ts` 的 `discoverDesktopPorts`，只取桌面版进程自己的监听，不做全端口扫描），候选顺序＝发现的端口 → 19387 → 旧 CLI 3080。默认优先桌面版（自动更新到最新）；都在时状态栏 + `DSH: Select DSH Instance` 可切换；`dsh-vscode.baseUrl` 显式设置永远最高优先（不跑发现）。桌面版换端口后靠断线看门狗（5s→30s 退避）自动重连并**复原当前会话**；「发现的动态端口」不允许钉死（选中＝回到自动）。都没起 → 提示"打开桌面版 App"（启动后等发现到的端口）/「手动输入地址…」（发现被策略禁时的出口）；旧版 3080 兜底保留。**红线：绝不用桌面版 CLI 起 `web` profile**——它的 bundled pnpm + 0.2.0 installAnchor 会把 `~/.dsh/profiles/node_modules`（现在是 0.1.5 树）重装，永久破坏旧 CLI。契约见 docs/design.md §3.5。**2026-09-30 更新：用户已删除旧 CLI（`C:\Users\wurui\dsh`）⇒ 本机只剩桌面版实例；3080 候选、`autoStart`、`startDsh` 兜底代码全部保留（重装旧 CLI 即自动恢复），但"启动旧版"入口仅在能解析到 CLI 时才提供。**
 - **协议双 flavor（2026-09-02 定）**：同时兼容 0.1.1-rc.x（legacy 点式端点/双WS/respond）与 0.1.2+（v012 斜杠端点/单WS remote.mux/token换cookie），连接时探测自动切换，未知形态出横幅不静默死。用户**持续升级 DSH 到最新版**——每次升级后跑 `pnpm smoke` 确认适配。契约详见 docs/design.md §3.0。
 - **会话共享**：与 DSH GUI 同一实例同一存储，会话/插件生态全共享。
 - **分发**：仅本地 vsix，不发布 Marketplace（发布是红线，需用户另行确认）。
@@ -30,10 +30,11 @@ pnpm compile        # tsc --noEmit 类型检查
 pnpm build          # esbuild 打包扩展宿主 + webview
 pnpm package        # vsce 打 .vsix（输出 dist/）
 pnpm smoke          # 连 127.0.0.1:3080 跑协议 smoke 测试（需 dsh web 在跑）
-pnpm smoke -- --base-url http://127.0.0.1:19387 --from-credentials   # 连桌面版 App（凭证自动铸 cookie，无需 token）
+$u = node scripts/which-port.cjs; pnpm smoke -- --base-url $u --from-credentials   # 连桌面版 App（端口运行时发现，凭证自动铸 cookie）
 pnpm args:audit     # 离线校验插件 RPC 参数与宿主网关描述符（旧 CLI 直接用 node 跑）
-pnpm regress:all    # 全部离线回归（fold / fence / pathlink / locate / model / repair）
+pnpm regress:all    # 全部离线回归（fold / fence / pathlink / locate / model / repair / instances）
 pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例在旧 CLI 目录缺失时自动 skip）
+pnpm regress:instances:live  # 实例发现真机项（要求当前有桌面版在跑；发现不到即 fail）
 ```
 
 > 审**桌面版**（`resources/app.asar` 里）必须让 Electron 当 node，普通 node 在 asar 上读不到文件：
@@ -43,6 +44,7 @@ pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例
 ## 验证纪律（改完必跑）
 
 - 改 `src/`：`pnpm compile` 必须过。
+- **改连接层（`src/connection/`）必跑 `pnpm regress:instances`**；有桌面版在跑时再跑 `pnpm regress:instances:live`（要求真的发现到端口，不自动 skip）。**任何验证命令都不得写死端口**——桌面版端口每次启动都变，统一用 `node scripts/which-port.cjs` 取当前地址。
 - 改 `webview/`：`pnpm build` + VSCode 里 `Developer: Reload Window` 手测。
 - **打包前必须 `pnpm compile` 0 错**（硬门槛，不是参考项）：esbuild **不校验类型**，类型错照样能打包并安装。2026-09-30 实测教训——会话行 `⋯` 菜单因漏打 `menu-open` 类而不生效，只有 `tsc` 的"变量未使用"把它暴露出来，当时那一版已经打包安装过了。
 - **每次给用户安装必须升版本号**：同版本号覆盖安装，VS Code **不会重新加载**扩展（文件换了但宿主里跑的是旧的）。2026-09-30 实测：连续三轮用同一个 0.19.5 覆盖安装，用户连看三轮"没改"，实际代码早已生效在磁盘上。
@@ -103,4 +105,4 @@ pnpm regress:locate # locate.ts 离线回归（25 项；真实机器集成用例
 
 ---
 
-最后更新: 2026-09-30（实例选择：默认优先桌面版 19387、显式 baseUrl 最高优先、可切换、兜底打开 App；`args:audit` 补流开帧/wrapped 覆盖 + asar 硬失败；0.2.0 实测事实与「事件名存活性对照」方法写入验证纪律）
+最后更新: 2026-10-19（实例选择：桌面版端口改运行时发现——0.2.1 起系统分配端口，候选＝发现端口 → 19387 → 3080；断线退避重连并复原当前会话；动态端口不允许钉死；新增 `regress:instances` 与 `which-port`，验证命令禁止写死端口）

@@ -14,7 +14,6 @@ import { EventStreams } from "./events.js";
 import { V012Streams } from "./remote.js";
 import { Auth } from "./auth.js";
 import { detectFlavor, type Flavor } from "./protocol.js";
-import { openDesktopApp } from "./instances.js";
 import {
   isDir,
   locateDshBin,
@@ -68,7 +67,7 @@ export class DshLifecycle {
   readonly auth: Auth;
   private readonly home: string;
 
-  constructor(private readonly baseUrl: string) {
+  constructor(private readonly baseUrl: string, private readonly selfReprobe = true) {
     this.home = process.env.USERPROFILE ?? process.env.HOME ?? "";
     this.auth = new Auth();
     this.client = new RpcClient(baseUrl, this.auth, this.home);
@@ -119,7 +118,9 @@ export class DshLifecycle {
     // is running at all (design.md §3.5).
     this.setState("disconnected");
     this.needsInstanceEmitter.fire();
-    this.keepDetecting();
+    // Desktop instances move ports; the extension-level watchdog re-resolves
+    // (which is enough), so do not run a second same-address poll here.
+    if (this.selfReprobe) this.keepDetecting();
   }
 
   /** Bind the flavor: route the client, build the matching stream layer. */
@@ -207,32 +208,6 @@ export class DshLifecycle {
   async probe(timeoutMs = 2000): Promise<boolean> {
     const detected = await detectFlavor(this.baseUrl, timeoutMs);
     return detected !== undefined;
-  }
-
-  /** Preferred fallback when nothing is running: open the desktop App and
-   *  attach to it — full feature set (base+web-app+agent-team+auto-review+
-   *  schedule+memory-loader), no second writer, and it keeps auto-updating. */
-  async launchDesktopApp(appPath: string): Promise<boolean> {
-    this.setState("starting");
-    log(`[lifecycle] launching desktop app: ${appPath}`);
-    if (!openDesktopApp(appPath)) {
-      this.setState("disconnected");
-      return false;
-    }
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      if (await this.probe(2000)) {
-        const detected = await detectFlavor(this.baseUrl, 3000);
-        if (detected) await this.applyFlavor(detected.flavor, detected.needsAuth);
-        this.streams?.retryNow();
-        return true;
-      }
-      await sleep(1500);
-    }
-    this.problemEmitter.fire("DSH 桌面版已启动，但 60s 内没有在本地址就绪。");
-    this.setState("disconnected");
-    this.keepDetecting();
-    return false;
   }
 
   /** Start dsh web detached (Windows-only in V1, see design.md known limits).
